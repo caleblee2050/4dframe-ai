@@ -1,0 +1,226 @@
+# 4DFrame AI — 펌웨어 어휘 단일 진실의 원천 (Single Source of Truth)
+#
+# 펌웨어: Ami5_V01 / FW1.3 (커밋 469c5f6, ThinkGen_Framework 레포)
+# 부팅 메시지: "BOOT:Ami5_V01:FW1.3"
+# 시리얼: 115200 baud
+#
+# 이 파일은 펌웨어가 받는 단일 바이트 명령 어휘를 정의한다.
+# JSON DSL 인터프리터(src/lib/dsl/)와 AI 시스템 프롬프트(src/lib/ai/)는 모두
+# 이 YAML을 import해서 학생 어휘 ↔ 펌웨어 바이트를 매핑한다.
+#
+# 절대 펌웨어 어휘를 여기 외 다른 곳에 하드코딩하지 말 것.
+
+version: 1
+firmware:
+  board_id: Ami5_V01
+  fw_version: "1.3"
+  baud: 115200
+
+# ─────────────────────────────────────────────────────────────
+# 액추에이터 정의 — 학생 자연어 ↔ 펌웨어 채널
+# ─────────────────────────────────────────────────────────────
+actuators:
+  motors:
+    - id: M1
+      label_kr: 모터 1
+      pin_in1: 8
+      pin_in2: A0
+      pwm_pin: 6        # D6 (TB6612FNG-A PWMA)
+      forward_byte: "1"
+      reverse_byte: "!"
+      dir_toggle_byte: "F1"
+      default_dir: 1
+      typical_start_pwm_level: 3   # V3에서 시동 (개체차 있음, 캘리브레이션 권장)
+
+    - id: M2
+      label_kr: 모터 2
+      pin_in1: A1
+      pin_in2: A2
+      pwm_pin: 5        # D5 (TB6612FNG-A PWMB)
+      forward_byte: "2"
+      reverse_byte: "@"
+      dir_toggle_byte: "F2"
+      default_dir: 1
+      typical_start_pwm_level: 3
+
+    - id: M3
+      label_kr: 모터 3
+      pin_in1: A3
+      pin_in2: A4
+      pwm_pin: 9        # D9 (TB6612FNG-B PWMA)
+      forward_byte: "3"
+      reverse_byte: "#"
+      dir_toggle_byte: "F3"
+      default_dir: -1   # 사용자 보드 PCB 라우팅 거울 반전 보정. M1+M3 회전축 결합 시 같은 방향 회전.
+      typical_start_pwm_level: 3
+
+    - id: M4
+      label_kr: 모터 4
+      pin_in1: 13
+      pin_in2: A5
+      pwm_pin: 10       # D10 (TB6612FNG-B PWMB)
+      forward_byte: "4"
+      reverse_byte: "$"
+      dir_toggle_byte: "F4"
+      default_dir: 1
+      typical_start_pwm_level: 5   # ⚠ 이 개체는 V5부터 시동 — 다른 모터 대비 빡빡한 편
+
+  servos:
+    - id: SA
+      label_kr: 서보 A
+      pin: 3
+      step_up_byte: "%"      # +15도
+      step_down_byte: "5"    # -15도
+      step_degrees: 15
+      range_min: 0
+      range_max: 180
+      default_pos: 90
+
+    - id: SB
+      label_kr: 서보 B
+      pin: 11
+      step_up_byte: "6"      # +15도
+      step_down_byte: "^"    # -15도
+      step_degrees: 15
+      range_min: 0
+      range_max: 180
+      default_pos: 90
+
+  sensors:
+    - id: DIST
+      label_kr: 거리 센서
+      type: HC-SR04
+      trig_pin: 7
+      echo_pin: 4
+      poll_interval_ms: 100
+      response_format: "DIST:<cm>"
+      threshold_event: "OBJ_DETECTED"   # < 5cm 시 발생
+
+# ─────────────────────────────────────────────────────────────
+# 글로벌 명령
+# ─────────────────────────────────────────────────────────────
+global_commands:
+  stop_all:
+    byte: "0"
+    description: 모든 모터 정지 (긴급 정지 포함)
+  car_forward:
+    byte: "W"
+    description: 4WD 전진 (M1+M3 정방향, M2+M4 정방향)
+  car_backward:
+    byte: "S"
+  car_turn_left:
+    byte: "A"
+  car_turn_right:
+    byte: "D"
+  diagnostic:
+    byte: "?"
+    description: ID/FW/PWM/posA/posB/DIR 응답
+  soft_reset:
+    byte: "*"
+    description: 워치독 리셋 (1.5초 대기 후 발동)
+
+# 글로벌 PWM 속도: V0~V9
+# 0 = 정지(0/255 duty), 9 = 최대(255/255), 그 외 (level * 28)/255
+# AI는 학생 자연어에서 절대 V0~V9를 직접 노출하지 않는다 — student_speed_levels 사용.
+pwm_global:
+  command_prefix: "V"
+  range: [0, 9]
+  duty_at_9: 255
+  duty_formula: "level == 9 ? 255 : level * 28"
+
+# 핀별 PWM 변조: X{idx}{duty}, idx ∈ {0,1,2,3} = D5/D6/D9/D10
+# 캘리브레이션/진단 전용. 일반 학생 흐름에서는 사용 금지.
+pwm_per_pin:
+  command_prefix: "X"
+  pin_index_to_pwm:
+    "0": 5    # D5 → M2
+    "1": 6    # D6 → M1
+    "2": 9    # D9 → M3
+    "3": 10   # D10 → M4
+
+# ─────────────────────────────────────────────────────────────
+# 학생 UX — 자연어 매핑
+# ─────────────────────────────────────────────────────────────
+# 펌웨어 V0~V9 10단계는 학생에게 너무 미세하다.
+# 3단계(천천히/보통/빠르게)만 노출하고 보드 캘리브레이션 결과로 자동 보정.
+student_speed_levels:
+  - label: "천천히"
+    aliases: ["살살", "느리게", "약하게"]
+    base_pwm_level: 5
+  - label: "보통"
+    aliases: ["적당히", "중간"]
+    base_pwm_level: 7
+  - label: "빠르게"
+    aliases: ["세게", "강하게", "빨리"]
+    base_pwm_level: 9
+
+# 작품별 자연어 알리아스 — 학생이 모터 번호 대신 작품 부위로 부른다.
+# 캘리브레이션 위저드에서 학생이 실제로 본인 작품에 맞춰 맵을 갱신한다.
+artwork_aliases:
+  viking:
+    label_kr: 바이킹
+    motor_aliases:
+      "왼쪽 노": M1
+      "오른쪽 노": M2
+      "회전축 왼쪽": M1
+      "회전축 오른쪽": M3
+      "흔들이": M3
+    notes:
+      - M1+M3가 진자 회전축에 결합. 같은 방향 회전(M3_DIR=-1 기본).
+      - 더 신나게 흔들리려면 양쪽 PWM 비대칭이 효과적 (예: M1=V7, M3=V9).
+
+  car_4wd:
+    label_kr: 자동차
+    motor_aliases:
+      "앞왼쪽": M1
+      "앞오른쪽": M2
+      "뒤왼쪽": M3
+      "뒤오른쪽": M4
+
+  swing:
+    label_kr: 회전그네
+    motor_aliases:
+      "회전판": M1
+
+  crocodile:
+    label_kr: 악어
+    servo_aliases:
+      "입": SA
+      "꼬리": SB
+
+# ─────────────────────────────────────────────────────────────
+# ⚠ 학생/AI에게 노출할 주의사항 (kid-safe phrasing)
+# ─────────────────────────────────────────────────────────────
+# AI 시스템 프롬프트가 동작 실패 시 이 문구들을 활용한다.
+warnings:
+  motor_individual_variance:
+    title: "모터마다 성격이 달라요"
+    student_facing: |
+      모터는 사람처럼 한 명 한 명 성격이 달라요.
+      어떤 모터는 살짝만 힘을 줘도 잘 돌고, 어떤 모터는 좀 더 세게 힘을 줘야 시동이 걸려요.
+      만약 작품이 안 움직이면 게으른 모터일 수 있어요. "내 모터 길들이기"를 한 번 해볼까요?
+    when_to_show:
+      - 학생이 V5("천천히")를 보냈는데 한 모터가 안 도는 경우
+      - 처음 새 보드를 연결한 직후
+      - 작품을 새로 끼워 만들고 첫 동작 시도한 경우
+    technical_note: |
+      개체차 보정은 펌웨어가 아닌 앱 측에서 처리한다.
+      캘리브레이션 위저드(src/app/play/calibrate/)가 4모터를 V3→V9로 스윕하면서
+      실제 시동 임계값을 측정해 localStorage에 저장한다.
+      이후 학생 "천천히" → max(V5, board.M{n}.start_threshold + 1) 로 보정.
+
+  motor_direction_mirror:
+    title: "거꾸로 돌면 방향 바꾸기"
+    student_facing: |
+      모터가 내 생각이랑 반대로 돌면 케이블을 뽑지 마세요!
+      앱에서 그 모터를 누르고 "방향 바꾸기" 버튼을 누르면 즉시 정방향이 돼요.
+    technical_note: F1~F4 명령. 토글 결과는 앱 localStorage에 영구 저장.
+
+  servo_torque_limited_on_usb:
+    title: "USB 5V로는 서보 두 개 동시 구동이 빡빡해요"
+    student_facing: |
+      서보 두 개를 한 번에 움직이려면 9V 배터리를 연결하는 게 좋아요.
+      USB만 꽂혀 있으면 "틱틱" 소리만 나고 안 움직일 수 있어요.
+    technical_note: |
+      Mac USB-C는 윈도우 USB-A보다 디바이스 전류 공급이 빡빡함 (USB-PD 협상 차이).
+      9V 배터리 또는 powered USB hub 권장.

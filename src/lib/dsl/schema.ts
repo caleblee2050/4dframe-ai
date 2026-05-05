@@ -1,0 +1,220 @@
+// 4DFrame AI — JSON DSL v0
+//
+// 학생의 자연어를 AI가 받아서 펌웨어 명령으로 가는 중간 표현(IR).
+// 핵심 원칙:
+//   1. AI는 절대 Python/JS 코드를 생성하지 않는다. JSON만 생성한다.
+//   2. 인터프리터(src/lib/dsl/interpreter.ts)는 이 JSON만 받아서
+//      commands.yaml의 어휘로 펌웨어에 시리얼 바이트를 보낸다.
+//   3. AI가 만든 JSON이 schema에 맞지 않으면 거부한다 — eval 안 함.
+//
+// 펌웨어 어휘는 src/lib/commands/commands.yaml 가 SSoT.
+
+// ─────────────────────────────────────────────────────────────
+// 액추에이터 식별자
+// ─────────────────────────────────────────────────────────────
+export type MotorId = 'M1' | 'M2' | 'M3' | 'M4';
+export type ServoId = 'SA' | 'SB';
+export type SpeedLabel = '천천히' | '보통' | '빠르게';
+export type Direction = 'forward' | 'reverse';
+
+// ─────────────────────────────────────────────────────────────
+// 스텝 (한 동작 단위)
+// ─────────────────────────────────────────────────────────────
+
+// 모터를 한 방향으로 돌리기. duration_ms 없으면 다음 step 또는 stop_all 까지 계속.
+export interface SpinStep {
+  do: 'spin';
+  motor: MotorId;
+  speed: SpeedLabel;        // 학생 어휘. 인터프리터가 보드 캘리브레이션으로 V_n 변환.
+  direction?: Direction;    // 기본 forward
+  duration_ms?: number;     // 1~30000
+}
+
+// 4WD 자동차 이동 (W/A/S/D 매크로 활용)
+export interface DriveStep {
+  do: 'drive';
+  heading: 'forward' | 'backward' | 'turn_left' | 'turn_right';
+  speed: SpeedLabel;
+  duration_ms?: number;
+}
+
+// 서보 각도 조절. 절대 각도 또는 상대 스텝(±15도 단위).
+export interface ServoStep {
+  do: 'servo';
+  servo: ServoId;
+  // 둘 중 하나만:
+  to_degrees?: number;      // 0~180 절대
+  step?: number;            // ±1, ±2 ... (펌웨어가 ±15도 단위로 처리)
+}
+
+// 글로벌 속도 변경. 다음 spin/drive에 적용.
+export interface SpeedStep {
+  do: 'speed';
+  level: SpeedLabel;
+}
+
+// 정지
+export interface StopStep {
+  do: 'stop';
+  scope?: 'all' | MotorId;  // 기본 'all'
+}
+
+// 일정 시간 대기
+export interface WaitStep {
+  do: 'wait';
+  ms: number;               // 1~30000
+}
+
+// 거리 센서 값이 임계값보다 작아질 때까지 대기 (예: "장애물 만나면")
+export interface WaitForDistanceStep {
+  do: 'wait_for_distance';
+  cm_below: number;         // 1~200
+  timeout_ms?: number;      // 기본 10000
+}
+
+// 반복 (단순한 N회 반복만 — 임의의 while/if 는 의도적으로 제외)
+export interface RepeatStep {
+  do: 'repeat';
+  times: number;            // 1~50
+  steps: Step[];
+}
+
+// AI가 학생에게 친절히 한마디 (왜 이렇게 동작하는지 설명).
+// 인터프리터가 speech-bubble UI에 표시. 펌웨어로는 안 나간다.
+export interface SayStep {
+  do: 'say';
+  text: string;             // 한국어 한 문장 권장. 1~140자.
+}
+
+// 학생 보드의 어떤 모터가 안 돌면 캘리브레이션 위저드 호출.
+// AI가 "제어가 안 먹힐 수 있다"고 판단할 때 선제적으로 emit.
+export interface CalibrateStep {
+  do: 'calibrate';
+  reason: 'motor_individual_variance' | 'motor_direction_mirror' | 'servo_power';
+}
+
+export type Step =
+  | SpinStep
+  | DriveStep
+  | ServoStep
+  | SpeedStep
+  | StopStep
+  | WaitStep
+  | WaitForDistanceStep
+  | RepeatStep
+  | SayStep
+  | CalibrateStep;
+
+// ─────────────────────────────────────────────────────────────
+// 프로그램 (AI가 한 번에 뱉는 단위)
+// ─────────────────────────────────────────────────────────────
+export interface Program {
+  schema_version: 1;
+  // 학생이 선택한 작품 (commands.yaml artwork_aliases 키). 모터 알리아스 해석에 쓰임.
+  artwork?: 'viking' | 'car_4wd' | 'swing' | 'crocodile' | 'free';
+  // AI가 짧게 학생에게 설명하는 헤더. SayStep 도 사용 가능. 둘 다 옵셔널.
+  intro?: string;
+  steps: Step[];
+}
+
+// ─────────────────────────────────────────────────────────────
+// 검증 — 인터프리터 진입 직전 항상 통과해야 함
+// ─────────────────────────────────────────────────────────────
+export class DslValidationError extends Error {
+  constructor(public path: string, message: string) {
+    super(`[${path}] ${message}`);
+  }
+}
+
+const SPEED_LABELS: SpeedLabel[] = ['천천히', '보통', '빠르게'];
+const MOTOR_IDS: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
+const SERVO_IDS: ServoId[] = ['SA', 'SB'];
+
+function assertInRange(path: string, value: number, min: number, max: number) {
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new DslValidationError(path, `${value} 는 [${min}, ${max}] 범위 밖`);
+  }
+}
+
+function validateStep(step: Step, path: string): void {
+  switch (step.do) {
+    case 'spin':
+      if (!MOTOR_IDS.includes(step.motor)) throw new DslValidationError(`${path}.motor`, `잘못된 모터: ${step.motor}`);
+      if (!SPEED_LABELS.includes(step.speed)) throw new DslValidationError(`${path}.speed`, `잘못된 속도: ${step.speed}`);
+      if (step.direction && step.direction !== 'forward' && step.direction !== 'reverse')
+        throw new DslValidationError(`${path}.direction`, `잘못된 방향: ${step.direction}`);
+      if (step.duration_ms !== undefined) assertInRange(`${path}.duration_ms`, step.duration_ms, 1, 30000);
+      return;
+    case 'drive':
+      if (!['forward','backward','turn_left','turn_right'].includes(step.heading))
+        throw new DslValidationError(`${path}.heading`, `잘못된 heading: ${step.heading}`);
+      if (!SPEED_LABELS.includes(step.speed)) throw new DslValidationError(`${path}.speed`, `잘못된 속도`);
+      if (step.duration_ms !== undefined) assertInRange(`${path}.duration_ms`, step.duration_ms, 1, 30000);
+      return;
+    case 'servo':
+      if (!SERVO_IDS.includes(step.servo)) throw new DslValidationError(`${path}.servo`, `잘못된 서보`);
+      if (step.to_degrees === undefined && step.step === undefined)
+        throw new DslValidationError(path, 'servo step 은 to_degrees 또는 step 중 하나 필요');
+      if (step.to_degrees !== undefined && step.step !== undefined)
+        throw new DslValidationError(path, 'servo step 은 to_degrees 와 step 동시 사용 불가');
+      if (step.to_degrees !== undefined) assertInRange(`${path}.to_degrees`, step.to_degrees, 0, 180);
+      if (step.step !== undefined) assertInRange(`${path}.step`, step.step, -12, 12);
+      return;
+    case 'speed':
+      if (!SPEED_LABELS.includes(step.level)) throw new DslValidationError(`${path}.level`, `잘못된 level`);
+      return;
+    case 'stop':
+      if (step.scope && step.scope !== 'all' && !MOTOR_IDS.includes(step.scope as MotorId))
+        throw new DslValidationError(`${path}.scope`, `잘못된 scope`);
+      return;
+    case 'wait':
+      assertInRange(`${path}.ms`, step.ms, 1, 30000);
+      return;
+    case 'wait_for_distance':
+      assertInRange(`${path}.cm_below`, step.cm_below, 1, 200);
+      if (step.timeout_ms !== undefined) assertInRange(`${path}.timeout_ms`, step.timeout_ms, 100, 60000);
+      return;
+    case 'repeat':
+      assertInRange(`${path}.times`, step.times, 1, 50);
+      if (!Array.isArray(step.steps) || step.steps.length === 0)
+        throw new DslValidationError(`${path}.steps`, 'repeat 은 비어있는 steps 불가');
+      step.steps.forEach((s, i) => validateStep(s, `${path}.steps[${i}]`));
+      return;
+    case 'say':
+      if (typeof step.text !== 'string' || step.text.length < 1 || step.text.length > 140)
+        throw new DslValidationError(`${path}.text`, 'say.text 는 1~140자');
+      return;
+    case 'calibrate':
+      if (!['motor_individual_variance','motor_direction_mirror','servo_power'].includes(step.reason))
+        throw new DslValidationError(`${path}.reason`, '잘못된 reason');
+      return;
+    default: {
+      const exhaustive: never = step;
+      throw new DslValidationError(path, `알 수 없는 step.do: ${JSON.stringify(exhaustive)}`);
+    }
+  }
+}
+
+export function validateProgram(input: unknown): Program {
+  if (typeof input !== 'object' || input === null) {
+    throw new DslValidationError('$', 'Program 은 object 여야 함');
+  }
+  const p = input as Record<string, unknown>;
+  if (p.schema_version !== 1) {
+    throw new DslValidationError('$.schema_version', `지원 버전 1 필요, got ${p.schema_version}`);
+  }
+  if (!Array.isArray(p.steps)) {
+    throw new DslValidationError('$.steps', 'steps 는 배열');
+  }
+  if (p.steps.length === 0 || p.steps.length > 200) {
+    throw new DslValidationError('$.steps', `steps 길이 1~200, got ${p.steps.length}`);
+  }
+  if (p.artwork !== undefined && !['viking','car_4wd','swing','crocodile','free'].includes(p.artwork as string)) {
+    throw new DslValidationError('$.artwork', `잘못된 artwork: ${p.artwork}`);
+  }
+  if (p.intro !== undefined && (typeof p.intro !== 'string' || p.intro.length > 280)) {
+    throw new DslValidationError('$.intro', 'intro 는 0~280자 문자열');
+  }
+  (p.steps as Step[]).forEach((s, i) => validateStep(s, `$.steps[${i}]`));
+  return p as unknown as Program;
+}
