@@ -101,12 +101,66 @@ export async function POST(req: Request) {
   }
 
   const audioBytes = Buffer.from(part.data, 'base64');
+  const upstreamMime = part.mimeType ?? '';
+
+  // Gemini 가 raw PCM L16 (audio/l16; rate=24000; channels=1) 으로 응답하면
+  // 브라우저 <audio> 가 재생 못 하므로 WAV 컨테이너로 감싼다.
+  if (upstreamMime.startsWith('audio/l16') || upstreamMime.startsWith('audio/L16')) {
+    const params = parseMediaTypeParams(upstreamMime);
+    const sampleRate = parseInt(params.rate ?? '24000', 10);
+    const channels = parseInt(params.channels ?? '1', 10);
+    const wav = wrapPcmAsWav(audioBytes, sampleRate, channels, 16);
+    return new Response(wav as unknown as BodyInit, {
+      status: 200,
+      headers: {
+        'Content-Type': 'audio/wav',
+        'Cache-Control': 'no-store',
+        'X-TTS-Path': 'direct',
+      },
+    });
+  }
+
   return new Response(audioBytes as unknown as BodyInit, {
     status: 200,
     headers: {
-      'Content-Type': part.mimeType ?? 'audio/wav',
+      'Content-Type': upstreamMime || 'audio/wav',
       'Cache-Control': 'no-store',
       'X-TTS-Path': 'direct',
     },
   });
+}
+
+// "audio/l16; rate=24000; channels=1" → { rate: "24000", channels: "1" }
+function parseMediaTypeParams(mt: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  const parts = mt.split(';').slice(1);
+  for (const p of parts) {
+    const [k, v] = p.split('=');
+    if (k && v) out[k.trim().toLowerCase()] = v.trim();
+  }
+  return out;
+}
+
+// PCM bytes 앞에 RIFF/WAVE 헤더 44바이트 추가
+function wrapPcmAsWav(pcm: Buffer, sampleRate: number, channels: number, bitsPerSample: number): Buffer {
+  const byteRate = sampleRate * channels * (bitsPerSample / 8);
+  const blockAlign = channels * (bitsPerSample / 8);
+  const dataSize = pcm.length;
+
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);              // fmt chunk size
+  header.writeUInt16LE(1, 20);                // audio format = PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(dataSize, 40);
+
+  return Buffer.concat([header, pcm]);
 }
