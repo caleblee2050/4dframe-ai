@@ -178,23 +178,24 @@ export default function PlayPage() {
     setSayMessages([]);
     setCurrentStepIndex(null);
 
-    // intro 도 음성 자동 재생 (prefetch 캐시 hit 이라 즉시).
-    // 첫 step 동작과 동시 시작 — speakText 는 await 안 해서 모터와 병렬.
+    // intro 음성을 끝까지 await 한 뒤 첫 step 시작.
+    // → "음성으로 먼저 설명 → 동작" 흐름을 학생 의도대로 강제.
     if (program.intro) {
-      void speakText(program.intro);
+      setSayMessages([{ text: stripAudioTags(program.intro), ts: Date.now() }]);
+      await speakText(program.intro);
     }
 
     abortRef.current = new AbortController();
     await runProgram(program, {
       signal: abortRef.current.signal,
-      onEvent: (e: InterpreterEvent) => {
+      onEvent: async (e: InterpreterEvent) => {
         if (e.type === 'step_start') setCurrentStepIndex(e.index);
         else if (e.type === 'step_end') setCurrentStepIndex(null);
         else if (e.type === 'say') {
-          // UI 표시는 audio tag 제거한 텍스트로
+          // UI 표시는 audio tag 제거. 음성은 원문 그대로 (오디오 태그 톤 반영).
           setSayMessages((s) => [...s, { text: stripAudioTags(e.text), ts: Date.now() }]);
-          // 음성은 원문 그대로 (audio tag 가 음성 톤 결정)
-          void speakText(e.text);
+          // ❗ 음성 끝까지 await — 인터프리터가 이 Promise 를 기다려 다음 step 으로.
+          await speakText(e.text);
         }
         else if (e.type === 'play_sound') {
           playEffect(e.sound, e.volume);

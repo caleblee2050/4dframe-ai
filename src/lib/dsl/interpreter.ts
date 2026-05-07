@@ -31,7 +31,9 @@ export type InterpreterEvent =
 
 export interface RunOptions {
   signal?: AbortSignal;
-  onEvent?: (e: InterpreterEvent) => void;
+  // void 또는 Promise — Promise 리턴 시 인터프리터가 await 한다.
+  // say 이벤트에 Promise 리턴하면 "음성 끝까지 기다린 후 다음 step" 흐름.
+  onEvent?: (e: InterpreterEvent) => void | Promise<void>;
   // 테스트 시 send/대기 함수를 주입할 수 있도록 (기본은 useBoardStore)
   send?: (payload: string) => Promise<void>;
   delay?: (ms: number) => Promise<void>;
@@ -43,9 +45,11 @@ export async function runProgram(program: Program, opts: RunOptions = {}): Promi
   const delay = opts.delay ?? defaultDelay;
   const readDistance = opts.readDistanceCm ?? (() => useBoardStore.getState().lastDistanceCm);
   const signal = opts.signal;
-  const emit = opts.onEvent ?? (() => {});
+  // emit 가 Promise 를 리턴하면 인터프리터가 await — say step 의 음성 종료 대기에 사용.
+  const emit: (e: InterpreterEvent) => void | Promise<void> = opts.onEvent ?? (() => {});
 
-  if (program.intro) emit({ type: 'say', text: program.intro });
+  // intro 자동 emit 제거 — page.tsx 가 onExecute 시작 시 별도로 await speakText(intro) 처리.
+  // (이중 재생 방지)
 
   // 인터프리터 로컬 상태 — speed step 만으로 다음 spin/drive 의 기본 속도가 바뀜
   let currentSpeed: SpeedLabel | null = null;
@@ -53,12 +57,12 @@ export async function runProgram(program: Program, opts: RunOptions = {}): Promi
   const runSteps = async (steps: Step[], pathPrefix: string) => {
     for (let i = 0; i < steps.length; i++) {
       if (signal?.aborted) {
-        emit({ type: 'aborted' });
+        await emit({ type: 'aborted' });
         await safeStop(send);
         return;
       }
       const step = steps[i];
-      emit({ type: 'step_start', step, index: i });
+      await emit({ type: 'step_start', step, index: i });
       try {
         await executeStep(step, {
           getSpeed: () => currentSpeed,
@@ -67,16 +71,16 @@ export async function runProgram(program: Program, opts: RunOptions = {}): Promi
           runSubSteps: (sub, prefix) => runSteps(sub, prefix),
         }, `${pathPrefix}[${i}]`);
       } catch (e) {
-        emit({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+        await emit({ type: 'error', message: e instanceof Error ? e.message : String(e) });
         await safeStop(send);
         return;
       }
-      emit({ type: 'step_end', step, index: i });
+      await emit({ type: 'step_end', step, index: i });
     }
   };
 
   await runSteps(program.steps, '$');
-  emit({ type: 'done' });
+  await emit({ type: 'done' });
 }
 
 interface StepCtx {
@@ -85,7 +89,8 @@ interface StepCtx {
   send: (payload: string) => Promise<void>;
   delay: (ms: number) => Promise<void>;
   readDistance: () => number | null;
-  emit: (e: InterpreterEvent) => void;
+  // Promise 리턴 시 인터프리터가 await — say step 음성 종료 대기에 사용.
+  emit: (e: InterpreterEvent) => void | Promise<void>;
   signal?: AbortSignal;
   runSubSteps: (steps: Step[], path: string) => Promise<void>;
 }
@@ -231,14 +236,17 @@ async function execRepeat(step: RepeatStep, ctx: StepCtx, path: string) {
 }
 
 async function execSay(step: SayStep, ctx: StepCtx) {
-  ctx.emit({ type: 'say', text: step.text });
+  // 음성 재생 끝까지 await — onEvent (page.tsx) 가 Promise 리턴.
+  // 이렇게 해야 학생이 "음성으로 먼저 설명하고 동작" 의도를 정확히 표현.
+  await ctx.emit({ type: 'say', text: step.text });
 }
 
 async function execCalibrate(step: CalibrateStep, ctx: StepCtx) {
-  ctx.emit({ type: 'calibrate', reason: step.reason });
+  await ctx.emit({ type: 'calibrate', reason: step.reason });
 }
 
 async function execPlaySound(step: PlaySoundStep, ctx: StepCtx) {
+  // 효과음은 짧고 분위기용이라 await 안 함 — 다음 step 과 동시 진행.
   ctx.emit({ type: 'play_sound', sound: step.sound, volume: step.volume ?? 1.0 });
 }
 
