@@ -6,6 +6,7 @@
 // 카탈로그에 명시되지 않아도 Gateway 가 자동 라우팅 가능한지 시도하는 방식.
 
 import { experimental_generateSpeech as generateSpeech } from 'ai';
+import { recordCall } from '@/lib/admin/metrics';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -19,17 +20,28 @@ interface TtsRequestBody {
 }
 
 export async function POST(req: Request) {
+  const startedAt = Date.now();
+  const recordTts = (status: number, audio_bytes?: number, input_tokens?: number, output_tokens?: number) =>
+    recordCall({
+      endpoint: 'tts', status, audio_bytes, input_tokens, output_tokens,
+      latency_ms: Date.now() - startedAt, ts: startedAt,
+    });
+
   let body: TtsRequestBody;
   try { body = await req.json(); }
-  catch { return new Response('Invalid JSON', { status: 400 }); }
+  catch { recordTts(400); return new Response('Invalid JSON', { status: 400 }); }
 
   if (typeof body.text !== 'string' || body.text.length === 0) {
+    recordTts(400);
     return new Response('text 가 비어 있습니다', { status: 400 });
   }
   if (body.text.length > 140) {
+    recordTts(400);
     return new Response('text 는 140자 이하', { status: 400 });
   }
 
+  // 한글 평균 ~1.5 token/char 추정 (input token 대략 추정)
+  const inputTokensEstimate = Math.ceil(body.text.length * 1.5);
   const voice = body.voice ?? DEFAULT_VOICE;
 
   // ─── 경로 A: AI Gateway 프록시 시도 ─────────────────────────
@@ -39,7 +51,10 @@ export async function POST(req: Request) {
       text: body.text,
       voice,
     });
-    return new Response(result.audio.uint8Array as unknown as BodyInit, {
+    const bytes = result.audio.uint8Array as unknown as Uint8Array;
+    // audio output token 대략: 24kHz 16bit mono ≈ 250 토큰/초 ≈ bytes / 192
+    recordTts(200, bytes.byteLength, inputTokensEstimate, Math.ceil(bytes.byteLength / 192));
+    return new Response(bytes as unknown as BodyInit, {
       status: 200,
       headers: {
         'Content-Type': result.audio.mediaType ?? 'audio/wav',
@@ -54,6 +69,7 @@ export async function POST(req: Request) {
   // ─── 경로 B: Gemini API 직접 호출 fallback ──────────────────
   const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
   if (!apiKey) {
+    recordTts(500);
     return new Response(
       JSON.stringify({
         error: 'AI Gateway 가 Gemini TTS 를 라우팅하지 못했고, fallback 용 GOOGLE_GENERATIVE_AI_API_KEY 도 미설정. https://aistudio.google.com/apikey 에서 키 발급 후 .env.local 또는 vercel env add 로 설정 필요.',
@@ -80,8 +96,10 @@ export async function POST(req: Request) {
   });
 
   if (!upstream.ok) {
+    const errText = await upstream.text();
+    recordTts(upstream.status);
     return new Response(
-      JSON.stringify({ error: `Gemini direct ${upstream.status}: ${await upstream.text()}` }),
+      JSON.stringify({ error: `Gemini direct ${upstream.status}: ${errText}` }),
       { status: upstream.status, headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -94,6 +112,7 @@ export async function POST(req: Request) {
 
   const part = data.candidates?.[0]?.content?.parts?.[0]?.inlineData;
   if (!part?.data) {
+    recordTts(502);
     return new Response(
       JSON.stringify({ error: 'Gemini 응답에 audio 데이터 없음', raw: data }),
       { status: 502, headers: { 'Content-Type': 'application/json' } }
@@ -110,6 +129,7 @@ export async function POST(req: Request) {
     const sampleRate = parseInt(params.rate ?? '24000', 10);
     const channels = parseInt(params.channels ?? '1', 10);
     const wav = wrapPcmAsWav(audioBytes, sampleRate, channels, 16);
+    recordTts(200, wav.byteLength, inputTokensEstimate, Math.ceil(audioBytes.byteLength / 192));
     return new Response(wav as unknown as BodyInit, {
       status: 200,
       headers: {
@@ -120,6 +140,7 @@ export async function POST(req: Request) {
     });
   }
 
+  recordTts(200, audioBytes.byteLength, inputTokensEstimate, Math.ceil(audioBytes.byteLength / 192));
   return new Response(audioBytes as unknown as BodyInit, {
     status: 200,
     headers: {

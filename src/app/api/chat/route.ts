@@ -11,6 +11,7 @@
 
 import { streamText } from 'ai';
 import { buildSystemPrompt, type PromptContext } from '@/lib/ai/systemPrompt';
+import { recordCall } from '@/lib/admin/metrics';
 
 export const runtime = 'nodejs';   // Fluid Compute 기본
 export const maxDuration = 60;
@@ -38,6 +39,7 @@ export async function POST(req: Request) {
   }
 
   const systemPrompt = buildSystemPrompt(body.context);
+  const startedAt = Date.now();
 
   const result = streamText({
     model: 'anthropic/claude-sonnet-4-6',
@@ -49,6 +51,26 @@ export async function POST(req: Request) {
     temperature: 0.7,
     // JSON 안에 마크다운/설명 안 섞이도록 유도
     stopSequences: ['```'],
+    // onFinish 에서 토큰 수 + 호출 메트릭 기록
+    onFinish: ({ usage }) => {
+      recordCall({
+        endpoint: 'chat',
+        status: 200,
+        latency_ms: Date.now() - startedAt,
+        input_tokens: usage?.inputTokens,
+        output_tokens: usage?.outputTokens,
+        ts: startedAt,
+      });
+    },
+    onError: ({ error }) => {
+      recordCall({
+        endpoint: 'chat',
+        status: 500,
+        latency_ms: Date.now() - startedAt,
+        ts: startedAt,
+      });
+      console.warn('[chat] error', error);
+    },
   });
 
   return result.toTextStreamResponse();
