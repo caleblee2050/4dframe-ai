@@ -395,16 +395,46 @@ export default function PlayPage() {
                           border: border.brutal,
                           background: active ? palette.secondary : (i % 2 ? palette.bg : palette.panel),
                           fontWeight: active ? 900 : 600,
-                          display: 'flex', gap: 8, alignItems: 'center',
+                          display: 'flex', flexDirection: 'column', gap: 2,
                         }}
                       >
-                        <span style={{ fontSize: 18 }}>{stepIcon[step.do]}</span>
-                        <span style={{ fontSize: 12, color: palette.textMuted, minWidth: 22 }}>#{i + 1}</span>
-                        <span style={{ fontSize: 13 }}>{describeStep(step)}</span>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <span style={{ fontSize: 18 }}>{stepIcon[step.do]}</span>
+                          <span style={{ fontSize: 12, color: palette.textMuted, minWidth: 22 }}>#{i + 1}</span>
+                          <span style={{ fontSize: 13 }}>{describeStep(step)}</span>
+                        </div>
+                        {step.hint && (
+                          <div style={{
+                            fontSize: 12,
+                            color: palette.textMuted,
+                            paddingLeft: 36,
+                            fontWeight: 500,
+                            fontStyle: 'italic',
+                          }}>
+                            💡 {step.hint}
+                          </div>
+                        )}
                       </li>
                     );
                   })}
                 </ol>
+                {program.learning_points && program.learning_points.length > 0 && (
+                  <div style={{
+                    marginTop: 12,
+                    background: palette.tileMint,
+                    border: border.brutal,
+                    borderRadius: radius.sm,
+                    padding: 12,
+                    boxShadow: shadow.brutalSm,
+                  }}>
+                    <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 6 }}>💡 오늘 배운 것</div>
+                    <ul style={{ paddingLeft: 18, margin: 0 }}>
+                      {program.learning_points.map((lp, i) => (
+                        <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{lp}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                   {!isExecuting ? (
                     <button onClick={onExecute} disabled={!isConnected} style={btn(palette.tertiary, '#fff')}>

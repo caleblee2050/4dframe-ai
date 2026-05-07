@@ -21,8 +21,14 @@ export type Direction = 'forward' | 'reverse';
 // 스텝 (한 동작 단위)
 // ─────────────────────────────────────────────────────────────
 
+// 모든 step 공통 — 학생이 코드 카드를 보면서 "이 줄이 왜 있는지" 이해하도록.
+// AI 가 step 마다 1줄 한국어로 채움. 학생 어휘, 30자 이내 권장.
+export interface BaseStep {
+  hint?: string;
+}
+
 // 모터를 한 방향으로 돌리기. duration_ms 없으면 다음 step 또는 stop_all 까지 계속.
-export interface SpinStep {
+export interface SpinStep extends BaseStep {
   do: 'spin';
   motor: MotorId;
   speed: SpeedLabel;        // 학생 어휘. 인터프리터가 보드 캘리브레이션으로 V_n 변환.
@@ -31,7 +37,7 @@ export interface SpinStep {
 }
 
 // 4WD 자동차 이동 (W/A/S/D 매크로 활용)
-export interface DriveStep {
+export interface DriveStep extends BaseStep {
   do: 'drive';
   heading: 'forward' | 'backward' | 'turn_left' | 'turn_right';
   speed: SpeedLabel;
@@ -39,7 +45,7 @@ export interface DriveStep {
 }
 
 // 서보 각도 조절. 절대 각도 또는 상대 스텝(±15도 단위).
-export interface ServoStep {
+export interface ServoStep extends BaseStep {
   do: 'servo';
   servo: ServoId;
   // 둘 중 하나만:
@@ -48,32 +54,32 @@ export interface ServoStep {
 }
 
 // 글로벌 속도 변경. 다음 spin/drive에 적용.
-export interface SpeedStep {
+export interface SpeedStep extends BaseStep {
   do: 'speed';
   level: SpeedLabel;
 }
 
 // 정지
-export interface StopStep {
+export interface StopStep extends BaseStep {
   do: 'stop';
   scope?: 'all' | MotorId;  // 기본 'all'
 }
 
 // 일정 시간 대기
-export interface WaitStep {
+export interface WaitStep extends BaseStep {
   do: 'wait';
   ms: number;               // 1~30000
 }
 
 // 거리 센서 값이 임계값보다 작아질 때까지 대기 (예: "장애물 만나면")
-export interface WaitForDistanceStep {
+export interface WaitForDistanceStep extends BaseStep {
   do: 'wait_for_distance';
   cm_below: number;         // 1~200
   timeout_ms?: number;      // 기본 10000
 }
 
 // 반복 (단순한 N회 반복만 — 임의의 while/if 는 의도적으로 제외)
-export interface RepeatStep {
+export interface RepeatStep extends BaseStep {
   do: 'repeat';
   times: number;            // 1~50
   steps: Step[];
@@ -81,14 +87,14 @@ export interface RepeatStep {
 
 // AI가 학생에게 친절히 한마디 (왜 이렇게 동작하는지 설명).
 // 인터프리터가 speech-bubble UI에 표시. 펌웨어로는 안 나간다.
-export interface SayStep {
+export interface SayStep extends BaseStep {
   do: 'say';
   text: string;             // 한국어 한 문장 권장. 1~140자.
 }
 
 // 학생 보드의 어떤 모터가 안 돌면 캘리브레이션 위저드 호출.
 // AI가 "제어가 안 먹힐 수 있다"고 판단할 때 선제적으로 emit.
-export interface CalibrateStep {
+export interface CalibrateStep extends BaseStep {
   do: 'calibrate';
   reason: 'motor_individual_variance' | 'motor_direction_mirror' | 'servo_power';
 }
@@ -108,7 +114,7 @@ export type SoundEffectId =
   | 'wobble'        // 진동 떨림
   ;
 
-export interface PlaySoundStep {
+export interface PlaySoundStep extends BaseStep {
   do: 'play_sound';
   sound: SoundEffectId;
   // 선택적 볼륨 (0.0~1.0). 기본 1.0.
@@ -138,6 +144,9 @@ export interface Program {
   // AI가 짧게 학생에게 설명하는 헤더. SayStep 도 사용 가능. 둘 다 옵셔널.
   intro?: string;
   steps: Step[];
+  // "오늘 배운 것" — 코딩 개념/동작 원리/변형 제안 등 1~3개. 학생용 한 문장 (40자 이내 권장).
+  // 실행 후 별도 카드로 표시되어 학습 정리.
+  learning_points?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -160,6 +169,10 @@ function assertInRange(path: string, value: number, min: number, max: number) {
 }
 
 function validateStep(step: Step, path: string): void {
+  // 모든 step 공통: hint (선택)
+  if (step.hint !== undefined && (typeof step.hint !== 'string' || step.hint.length > 100)) {
+    throw new DslValidationError(`${path}.hint`, 'hint 는 0~100자 문자열');
+  }
   switch (step.do) {
     case 'spin':
       if (!MOTOR_IDS.includes(step.motor)) throw new DslValidationError(`${path}.motor`, `잘못된 모터: ${step.motor}`);
@@ -242,6 +255,19 @@ export function validateProgram(input: unknown): Program {
   }
   if (p.intro !== undefined && (typeof p.intro !== 'string' || p.intro.length > 280)) {
     throw new DslValidationError('$.intro', 'intro 는 0~280자 문자열');
+  }
+  if (p.learning_points !== undefined) {
+    if (!Array.isArray(p.learning_points)) {
+      throw new DslValidationError('$.learning_points', '배열이어야 함');
+    }
+    if (p.learning_points.length > 5) {
+      throw new DslValidationError('$.learning_points', '최대 5개');
+    }
+    p.learning_points.forEach((lp, i) => {
+      if (typeof lp !== 'string' || lp.length === 0 || lp.length > 120) {
+        throw new DslValidationError(`$.learning_points[${i}]`, '1~120자 문자열');
+      }
+    });
   }
   (p.steps as Step[]).forEach((s, i) => validateStep(s, `$.steps[${i}]`));
   return p as unknown as Program;
