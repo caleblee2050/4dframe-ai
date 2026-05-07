@@ -141,12 +141,21 @@ export interface Program {
   schema_version: 1;
   // 학생이 선택한 작품 (commands.yaml artwork_aliases 키). 모터 알리아스 해석에 쓰임.
   artwork?: 'viking' | 'car_4wd' | 'swing' | 'crocodile' | 'free';
-  // AI가 짧게 학생에게 설명하는 헤더. SayStep 도 사용 가능. 둘 다 옵셔널.
+  // AI가 학생에게 거는 첫 한 문장. SayStep 도 사용 가능. 둘 다 옵셔널.
   intro?: string;
+  // 코드. **0개도 허용** — AI 가 코드 안 만들고 질문만 할 때 사용 (대화형 세션).
   steps: Step[];
   // "오늘 배운 것" — 코딩 개념/동작 원리/변형 제안 등 1~3개. 학생용 한 문장 (40자 이내 권장).
   // 실행 후 별도 카드로 표시되어 학습 정리.
   learning_points?: string[];
+  // 학생에게 던지는 후속 질문. 1~3개. AI 가 학생 의도를 더 알고 싶거나
+  // 더 멋진 결과를 위해 함께 결정하고 싶을 때 사용.
+  // 예: "어떻게 흔들면 좋을까? 점점 빠르게? 똑같이?"
+  questions?: string[];
+  // 학생이 클릭만 하면 다음 입력으로 들어가는 짧은 제안 (12자 이내 권장). 1~5개.
+  // 학부모-아이가 함께 보면서 "이거 해볼까?" 결정 가능.
+  // 예: ["더 빨리", "반대로", "10번 반복"]
+  variation_chips?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -247,8 +256,9 @@ export function validateProgram(input: unknown): Program {
   if (!Array.isArray(p.steps)) {
     throw new DslValidationError('$.steps', 'steps 는 배열');
   }
-  if (p.steps.length === 0 || p.steps.length > 200) {
-    throw new DslValidationError('$.steps', `steps 길이 1~200, got ${p.steps.length}`);
+  // 0 허용 — 대화형 모드: AI 가 코드 없이 질문만 응답할 수 있음.
+  if (p.steps.length > 200) {
+    throw new DslValidationError('$.steps', `steps 길이 0~200, got ${p.steps.length}`);
   }
   if (p.artwork !== undefined && !['viking','car_4wd','swing','crocodile','free'].includes(p.artwork as string)) {
     throw new DslValidationError('$.artwork', `잘못된 artwork: ${p.artwork}`);
@@ -267,6 +277,22 @@ export function validateProgram(input: unknown): Program {
       if (typeof lp !== 'string' || lp.length === 0 || lp.length > 120) {
         throw new DslValidationError(`$.learning_points[${i}]`, '1~120자 문자열');
       }
+    });
+  }
+  if (p.questions !== undefined) {
+    if (!Array.isArray(p.questions)) throw new DslValidationError('$.questions', '배열');
+    if (p.questions.length > 5) throw new DslValidationError('$.questions', '최대 5개');
+    p.questions.forEach((q, i) => {
+      if (typeof q !== 'string' || q.length === 0 || q.length > 100)
+        throw new DslValidationError(`$.questions[${i}]`, '1~100자');
+    });
+  }
+  if (p.variation_chips !== undefined) {
+    if (!Array.isArray(p.variation_chips)) throw new DslValidationError('$.variation_chips', '배열');
+    if (p.variation_chips.length > 8) throw new DslValidationError('$.variation_chips', '최대 8개');
+    p.variation_chips.forEach((c, i) => {
+      if (typeof c !== 'string' || c.length === 0 || c.length > 30)
+        throw new DslValidationError(`$.variation_chips[${i}]`, '1~30자');
     });
   }
   (p.steps as Step[]).forEach((s, i) => validateStep(s, `$.steps[${i}]`));

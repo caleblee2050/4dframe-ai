@@ -13,7 +13,7 @@ import { validateProgram, type Program, type Step, type MotorId } from '@/lib/ds
 import { palette, radius, shadow, border, motion as m } from '@/lib/design/tokens';
 import { MOTORS, GLOBAL } from '@/lib/commands/commands';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
-import { useSoundStore, playEffect, speakText, stopSpeaking, stripAudioTags } from '@/lib/sound/soundManager';
+import { useSoundStore, playEffect, speakText, stopSpeaking, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
 
 const MOTOR_IDS: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
 
@@ -91,6 +91,9 @@ export default function PlayPage() {
   const [program, setProgram] = useState<Program | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
 
+  // 대화 누적 — AI 와의 코딩 세션 history
+  const [history, setHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+
   const [isExecuting, setIsExecuting] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState<number | null>(null);
   const [sayMessages, setSayMessages] = useState<Array<{ text: string; ts: number }>>([]);
@@ -105,18 +108,24 @@ export default function PlayPage() {
     lastDistanceCm: board.lastDistanceCm,
   }), [artwork, distanceReactivity, cal, board.lastDistanceCm]);
 
-  const onGenerate = async () => {
-    if (!input.trim() || isGenerating) return;
+  const sendPrompt = async (rawPrompt: string) => {
+    const prompt = rawPrompt.trim();
+    if (!prompt || isGenerating) return;
     setIsGenerating(true);
     setStreamedText('');
     setProgram(null);
     setGenError(null);
+    setInput('');
+
+    // 사용자 메시지 history 에 즉시 추가 (낙관적 업데이트)
+    const newHistory = [...history, { role: 'user' as const, content: prompt }];
+    setHistory(newHistory);
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: input, context: promptContext }),
+        body: JSON.stringify({ prompt, context: promptContext, history }),
       });
       if (!res.ok || !res.body) {
         throw new Error(`AI 응답 실패: ${res.status} ${await res.text()}`);
@@ -139,11 +148,24 @@ export default function PlayPage() {
       }
       const valid = validateProgram(parsed);
       setProgram(valid);
+      setHistory([...newHistory, { role: 'assistant', content: cleaned }]);
+      void prefetchProgramAudio(valid);
     } catch (e) {
       setGenError(e instanceof Error ? e.message : String(e));
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const onGenerate = () => sendPrompt(input);
+
+  const onResetSession = () => {
+    setHistory([]);
+    setProgram(null);
+    setStreamedText('');
+    setGenError(null);
+    setSayMessages([]);
+    setInput('');
   };
 
   const onExecute = async () => {
@@ -155,6 +177,13 @@ export default function PlayPage() {
     setIsExecuting(true);
     setSayMessages([]);
     setCurrentStepIndex(null);
+
+    // intro 도 음성 자동 재생 (prefetch 캐시 hit 이라 즉시).
+    // 첫 step 동작과 동시 시작 — speakText 는 await 안 해서 모터와 병렬.
+    if (program.intro) {
+      void speakText(program.intro);
+    }
+
     abortRef.current = new AbortController();
     await runProgram(program, {
       signal: abortRef.current.signal,
@@ -317,7 +346,26 @@ export default function PlayPage() {
 
         {/* 자연어 입력 */}
         <section style={card}>
-          <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>💬 작품에게 말로 시키기</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 800 }}>
+              💬 짝코더와 이야기하기
+              {history.length > 0 && (
+                <span style={{ fontSize: 11, color: palette.textMuted, marginLeft: 8, fontWeight: 600 }}>
+                  · 이번 세션 {Math.floor(history.length / 2) + (history.length % 2)}턴
+                </span>
+              )}
+            </div>
+            {history.length > 0 && (
+              <button
+                onClick={onResetSession}
+                style={{
+                  fontFamily: 'inherit', fontWeight: 700, fontSize: 11,
+                  background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                  padding: '4px 10px', cursor: 'pointer',
+                }}
+              >🔄 새로 시작</button>
+            )}
+          </div>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -382,6 +430,11 @@ export default function PlayPage() {
                     💭 {program.intro}
                   </div>
                 )}
+                {program.steps.length === 0 && (
+                  <div style={{ fontSize: 13, color: palette.textMuted, fontStyle: 'italic', marginBottom: 10 }}>
+                    (코드 없이 짝코더가 먼저 물어봤어요. 아래 칩을 누르거나 답해주세요.)
+                  </div>
+                )}
                 <ol style={{ paddingLeft: 0, listStyle: 'none', margin: 0 }}>
                   {program.steps.map((step, i) => {
                     const active = currentStepIndex === i;
@@ -435,20 +488,62 @@ export default function PlayPage() {
                     </ul>
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                  {!isExecuting ? (
-                    <button onClick={onExecute} disabled={!isConnected} style={btn(palette.tertiary, '#fff')}>
-                      ▶ 실행
-                    </button>
-                  ) : (
-                    <button onClick={onStopExecution} style={btn(palette.primary, '#fff')}>⏹ 정지</button>
-                  )}
-                  {!isConnected && (
-                    <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
-                      (보드를 연결하면 실행 가능)
-                    </span>
-                  )}
-                </div>
+                {program.questions && program.questions.length > 0 && (
+                  <div style={{
+                    marginTop: 12,
+                    background: palette.tilePink,
+                    border: border.brutal,
+                    borderRadius: radius.sm,
+                    padding: 12,
+                    boxShadow: shadow.brutalSm,
+                  }}>
+                    <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 6 }}>🤔 짝코더가 물어봐요</div>
+                    <ul style={{ paddingLeft: 18, margin: 0 }}>
+                      {program.questions.map((q, i) => (
+                        <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{q}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {program.variation_chips && program.variation_chips.length > 0 && (
+                  <div style={{ marginTop: 12 }}>
+                    <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 6, fontWeight: 700 }}>
+                      ✨ 다음에 해볼까? (눌러서 보내기)
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {program.variation_chips.map((chip, i) => (
+                        <button
+                          key={i}
+                          onClick={() => sendPrompt(chip)}
+                          disabled={isGenerating}
+                          style={{
+                            fontFamily: 'inherit', fontWeight: 800, fontSize: 13,
+                            background: palette.secondary,
+                            border: border.brutal, borderRadius: 999,
+                            padding: '6px 14px', cursor: 'pointer',
+                            boxShadow: shadow.brutalSm,
+                          }}
+                        >{chip}</button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {program.steps.length > 0 && (
+                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                    {!isExecuting ? (
+                      <button onClick={onExecute} disabled={!isConnected} style={btn(palette.tertiary, '#fff')}>
+                        ▶ 실행
+                      </button>
+                    ) : (
+                      <button onClick={onStopExecution} style={btn(palette.primary, '#fff')}>⏹ 정지</button>
+                    )}
+                    {!isConnected && (
+                      <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
+                        (보드를 연결하면 실행 가능)
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: palette.textMuted, whiteSpace: 'pre-wrap' }}>

@@ -8,7 +8,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { SoundEffectId } from '@/lib/dsl/schema';
+import type { SoundEffectId, Step, Program } from '@/lib/dsl/schema';
 
 interface SoundState {
   muted: boolean;
@@ -65,6 +65,10 @@ export function playEffect(id: SoundEffectId, volume = 1.0): void {
 let currentTtsAudio: HTMLAudioElement | null = null;
 let currentTtsObjectUrl: string | null = null;
 
+// TTS Blob URL 캐시 — text → blob URL.
+// 응답 받자마자 prefetchProgramAudio 가 채워둠. speakText 가 캐시 먼저 조회.
+const ttsBlobCache = new Map<string, string>();
+
 function stripAudioTags(text: string): string {
   // 인라인 태그 [excited] 등을 시각 표시용으로 노출할 때는 유지하되,
   // 음성 합성 입력에는 그대로 보내는 게 맞음 (Gemini가 처리). 이 함수는 UI 표시용.
@@ -73,14 +77,10 @@ function stripAudioTags(text: string): string {
 
 export { stripAudioTags };
 
-export async function speakText(text: string): Promise<void> {
-  if (typeof window === 'undefined') return;
-  if (useSoundStore.getState().muted) return;
-
-  // 이전 재생 중단
-  stopSpeaking();
-
-  useSoundStore.setState({ isPlayingTts: true });
+// 한 텍스트의 TTS 를 fetch 해서 Blob URL 로 캐시. 캐시 hit 시 바로 반환.
+async function fetchAndCacheTts(text: string): Promise<string | null> {
+  const cached = ttsBlobCache.get(text);
+  if (cached) return cached;
   try {
     const res = await fetch('/api/tts', {
       method: 'POST',
@@ -88,36 +88,78 @@ export async function speakText(text: string): Promise<void> {
       body: JSON.stringify({ text }),
     });
     if (!res.ok) {
-      // TTS 실패 — 조용히 fallback (콘솔에만 남기고 UI 막지 않음)
       console.warn('[TTS]', res.status, await res.text().catch(() => ''));
-      return;
+      return null;
     }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-    currentTtsObjectUrl = url;
+    ttsBlobCache.set(text, url);
+    return url;
+  } catch (e) {
+    console.warn('[TTS] fetch failed', e);
+    return null;
+  }
+}
+
+export async function speakText(text: string): Promise<void> {
+  if (typeof window === 'undefined') return;
+  if (useSoundStore.getState().muted) return;
+
+  stopSpeaking();
+  useSoundStore.setState({ isPlayingTts: true });
+
+  try {
+    const url = await fetchAndCacheTts(text);
+    if (!url) return;
 
     const audio = new Audio(url);
     currentTtsAudio = audio;
 
     await new Promise<void>((resolve) => {
       const cleanup = () => {
-        if (currentTtsObjectUrl === url) {
-          URL.revokeObjectURL(url);
-          currentTtsObjectUrl = null;
-        }
-        if (currentTtsAudio === audio) {
-          currentTtsAudio = null;
-        }
+        if (currentTtsAudio === audio) currentTtsAudio = null;
         resolve();
       };
       audio.onended = cleanup;
       audio.onerror = cleanup;
       void audio.play().catch(() => cleanup());
     });
-  } catch (e) {
-    console.warn('[TTS] failed', e);
   } finally {
     useSoundStore.setState({ isPlayingTts: false });
+  }
+}
+
+// 응답 받은 즉시 호출 — 모든 say.text + intro 병렬 prefetch + play_sound 효과음 미리 로드.
+// 학생이 ▶ 실행 누르는 시점엔 거의 모든 오디오가 준비되어 동기화 재생.
+export async function prefetchProgramAudio(program: Program): Promise<void> {
+  if (typeof window === 'undefined') return;
+  if (useSoundStore.getState().muted) return;
+
+  // 1) say + intro 텍스트 모두 모음
+  const texts: string[] = [];
+  if (program.intro) texts.push(program.intro);
+  collectSayTexts(program.steps, texts);
+
+  // 2) 정적 효과음 미리 lazy-load 트리거
+  const sounds = new Set<SoundEffectId>();
+  collectSoundIds(program.steps, sounds);
+  for (const id of sounds) getEffect(id);
+
+  // 3) TTS 병렬 prefetch (실패해도 무시 — 실행 시 재시도 됨)
+  await Promise.all(texts.map((t) => fetchAndCacheTts(t)));
+}
+
+function collectSayTexts(steps: Step[], out: string[]): void {
+  for (const s of steps) {
+    if (s.do === 'say') out.push(s.text);
+    else if (s.do === 'repeat') collectSayTexts(s.steps, out);
+  }
+}
+
+function collectSoundIds(steps: Step[], out: Set<SoundEffectId>): void {
+  for (const s of steps) {
+    if (s.do === 'play_sound') out.add(s.sound);
+    else if (s.do === 'repeat') collectSoundIds(s.steps, out);
   }
 }
 
@@ -126,9 +168,7 @@ export function stopSpeaking(): void {
     try { currentTtsAudio.pause(); } catch {}
     currentTtsAudio = null;
   }
-  if (currentTtsObjectUrl) {
-    try { URL.revokeObjectURL(currentTtsObjectUrl); } catch {}
-    currentTtsObjectUrl = null;
-  }
+  // ttsBlobCache 의 URL 은 revoke 안 함 (재사용 위해 유지)
+  currentTtsObjectUrl = null;
   useSoundStore.setState({ isPlayingTts: false });
 }
