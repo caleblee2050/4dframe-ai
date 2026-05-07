@@ -93,6 +93,28 @@ export interface CalibrateStep {
   reason: 'motor_individual_variance' | 'motor_direction_mirror' | 'servo_power';
 }
 
+// 정적 효과음 라이브러리에서 한 개 재생. 클라이언트 Web Audio API 로 재생.
+// 펌웨어로 안 나감.
+export type SoundEffectId =
+  | 'cheer'         // 박수/환호
+  | 'engine_start'  // 자동차 시동
+  | 'engine_run'    // 자동차 주행 루프
+  | 'creak'         // 바이킹 삐걱
+  | 'splash'        // 물 첨벙
+  | 'whoosh'        // 휙 (회전, 빠른 움직임)
+  | 'crocodile'     // 악어 으르렁
+  | 'beep'          // 알림음
+  | 'ding'          // 띵 (성공)
+  | 'wobble'        // 진동 떨림
+  ;
+
+export interface PlaySoundStep {
+  do: 'play_sound';
+  sound: SoundEffectId;
+  // 선택적 볼륨 (0.0~1.0). 기본 1.0.
+  volume?: number;
+}
+
 export type Step =
   | SpinStep
   | DriveStep
@@ -103,7 +125,8 @@ export type Step =
   | WaitForDistanceStep
   | RepeatStep
   | SayStep
-  | CalibrateStep;
+  | CalibrateStep
+  | PlaySoundStep;
 
 // ─────────────────────────────────────────────────────────────
 // 프로그램 (AI가 한 번에 뱉는 단위)
@@ -187,6 +210,11 @@ function validateStep(step: Step, path: string): void {
     case 'calibrate':
       if (!['motor_individual_variance','motor_direction_mirror','servo_power'].includes(step.reason))
         throw new DslValidationError(`${path}.reason`, '잘못된 reason');
+      return;
+    case 'play_sound':
+      if (!['cheer','engine_start','engine_run','creak','splash','whoosh','crocodile','beep','ding','wobble'].includes(step.sound))
+        throw new DslValidationError(`${path}.sound`, `잘못된 sound: ${step.sound}`);
+      if (step.volume !== undefined) assertInRange(`${path}.volume`, step.volume, 0, 1);
       return;
     default: {
       const exhaustive: never = step;

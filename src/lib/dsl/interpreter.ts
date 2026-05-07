@@ -11,7 +11,7 @@
 import type {
   Program, Step, MotorId, SpeedLabel,
   SpinStep, DriveStep, ServoStep, SpeedStep, StopStep, WaitStep,
-  WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep,
+  WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep, PlaySoundStep,
 } from './schema';
 import {
   MOTORS, SERVOS, GLOBAL, SPEED_BASE_LEVEL, pwmCommand,
@@ -22,6 +22,7 @@ import { useBoardStore } from '@/lib/serial/webSerial';
 export type InterpreterEvent =
   | { type: 'say'; text: string }
   | { type: 'calibrate'; reason: CalibrateStep['reason'] }
+  | { type: 'play_sound'; sound: PlaySoundStep['sound']; volume: number }
   | { type: 'step_start'; step: Step; index: number }
   | { type: 'step_end'; step: Step; index: number }
   | { type: 'aborted' }
@@ -111,6 +112,8 @@ async function executeStep(step: Step, ctx: StepCtx, path: string): Promise<void
       return execSay(step, ctx);
     case 'calibrate':
       return execCalibrate(step, ctx);
+    case 'play_sound':
+      return execPlaySound(step, ctx);
   }
 }
 
@@ -233,6 +236,10 @@ async function execSay(step: SayStep, ctx: StepCtx) {
 
 async function execCalibrate(step: CalibrateStep, ctx: StepCtx) {
   ctx.emit({ type: 'calibrate', reason: step.reason });
+}
+
+async function execPlaySound(step: PlaySoundStep, ctx: StepCtx) {
+  ctx.emit({ type: 'play_sound', sound: step.sound, volume: step.volume ?? 1.0 });
 }
 
 async function safeStop(send: (p: string) => Promise<void>) {

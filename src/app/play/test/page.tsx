@@ -38,6 +38,16 @@ const PROGRAMS: Array<{ id: string; label: string; emoji: string; program: Progr
     },
   },
   {
+    id: 'spin-m4-fast',
+    label: 'M4 빠르게 1초 (V9)',
+    emoji: '🐎',
+    program: {
+      schema_version: 1,
+      intro: 'M4 만 100% PWM 으로 강제 시도. 이것도 안 돌면 회로 문제일 가능성이 큽니다.',
+      steps: [{ do: 'spin', motor: 'M4', speed: '빠르게', duration_ms: 1000 }],
+    },
+  },
+  {
     id: 'viking',
     label: '바이킹 흔들기 (M1+M3)',
     emoji: '🚣',
@@ -156,6 +166,44 @@ export default function PlayTestPage() {
     cal.toggleDir(motor);
   };
 
+  // 펌웨어 X{idx}{duty} 명령 — 인터프리터 우회, 핀별 PWM 직접 변조
+  // idx: 0=D5(M2), 1=D6(M1), 2=D9(M3), 3=D10(M4)
+  const onRawPin = async (idx: 0|1|2|3, duty: 0|9, then?: '1'|'2'|'3'|'4'|'0') => {
+    if (board.status !== 'connected') return;
+    await board.send(`X${idx}${duty}`);
+    if (then !== undefined) {
+      await new Promise((r) => setTimeout(r, 50));
+      await board.send(then);
+    }
+  };
+
+  const onRawForce = async (motor: MotorId) => {
+    if (board.status !== 'connected') return;
+    const cfg = MOTORS[motor];
+    // X{idx} 9 = 100% duty → forwardByte 송신
+    await onRawPin(cfg.pwmIndex, 9, cfg.forwardByte as '1'|'2'|'3'|'4');
+    setTimeout(() => { void board.send(GLOBAL.stopAll); }, 1000);
+  };
+
+  // 시동 V 한 단계 조정
+  const onAdjustThreshold = (motor: MotorId, delta: 1 | -1) => {
+    const current = cal.current.startThreshold[motor];
+    const next = Math.max(0, Math.min(9, current + delta));
+    if (next !== current) cal.setStartThreshold(motor, next);
+  };
+
+  // 학생 시동 테스트 — 현재 startThreshold V 로 그 모터만 1초 정방향 시동.
+  // X{idx}{duty} 핀별 PWM 사용 (글로벌 V 영향 없이 그 모터만 테스트).
+  const onTestStart = async (motor: MotorId) => {
+    if (board.status !== 'connected') return;
+    const cfg = MOTORS[motor];
+    const level = cal.current.startThreshold[motor];
+    await board.send(`X${cfg.pwmIndex}${level}`);
+    await new Promise((r) => setTimeout(r, 30));
+    await board.send(cfg.forwardByte);
+    setTimeout(() => { void board.send(GLOBAL.stopAll); }, 1000);
+  };
+
   const isConnected = board.status === 'connected';
 
   return (
@@ -238,31 +286,89 @@ export default function PlayTestPage() {
 
           <div style={card}>
             <h2 style={{ marginTop: 0 }}>모터 캘리브레이션</h2>
-            <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 8 }}>
-              방향이 거꾸로 돌면 누르세요. 펌웨어 F{`{n}`} 토글 + 로컬 저장.
+            <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 12 }}>
+              모터마다 성격이 달라요. ▶ 시동 눌러보고, 안 돌면 + 로 한 칸씩 올리세요.
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
               {MOTOR_IDS.map((id) => {
                 const dir = cal.current.dirOverride[id];
+                const v = cal.current.startThreshold[id];
                 return (
-                  <button
+                  <div
                     key={id}
-                    onClick={() => onToggleDir(id)}
                     style={{
-                      ...buttonBase,
+                      ...card,
                       background: dir === 1 ? palette.accent : palette.tilePink,
-                      flexDirection: 'column',
+                      padding: 10,
                       display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
+                      flexDirection: 'column',
+                      gap: 6,
+                      alignItems: 'stretch',
                     }}
                   >
-                    <div style={{ fontWeight: 900 }}>{id}</div>
-                    <div style={{ fontSize: 12 }}>{dir === 1 ? '정방향' : '역방향'}</div>
-                    <div style={{ fontSize: 11, color: palette.textMuted }}>
-                      시동 V{cal.current.startThreshold[id]}
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: 900, fontSize: 16 }}>{id}</span>
+                      <button
+                        onClick={() => onToggleDir(id)}
+                        title="방향 바꾸기"
+                        style={{
+                          fontFamily: 'inherit', fontWeight: 700, fontSize: 11,
+                          background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                          padding: '2px 6px', cursor: 'pointer',
+                        }}
+                      >
+                        {dir === 1 ? '정방향' : '역방향'}
+                      </button>
                     </div>
-                  </button>
+
+                    <div style={{ textAlign: 'center', fontSize: 11, color: palette.textMuted, marginTop: 2 }}>
+                      시동
+                    </div>
+                    <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 28, lineHeight: 1 }}>
+                      V{v}
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                      <button
+                        onClick={() => onAdjustThreshold(id, -1)}
+                        disabled={v <= 0}
+                        style={{
+                          fontFamily: 'inherit', fontWeight: 900, fontSize: 16,
+                          background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                          cursor: v <= 0 ? 'not-allowed' : 'pointer',
+                          opacity: v <= 0 ? 0.4 : 1,
+                          padding: '4px 0',
+                        }}
+                      >−</button>
+                      <button
+                        onClick={() => onAdjustThreshold(id, +1)}
+                        disabled={v >= 9}
+                        style={{
+                          fontFamily: 'inherit', fontWeight: 900, fontSize: 16,
+                          background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                          cursor: v >= 9 ? 'not-allowed' : 'pointer',
+                          opacity: v >= 9 ? 0.4 : 1,
+                          padding: '4px 0',
+                        }}
+                      >+</button>
+                    </div>
+
+                    <button
+                      onClick={() => onTestStart(id)}
+                      disabled={!isConnected || running !== null}
+                      style={{
+                        fontFamily: 'inherit', fontWeight: 800, fontSize: 12,
+                        background: palette.tertiary, color: '#fff',
+                        border: border.brutal, borderRadius: radius.sm,
+                        cursor: isConnected ? 'pointer' : 'not-allowed',
+                        opacity: (!isConnected || running !== null) ? 0.5 : 1,
+                        padding: '6px 0',
+                        boxShadow: shadow.brutalSm,
+                      }}
+                    >
+                      ▶ 시동
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -303,6 +409,41 @@ export default function PlayTestPage() {
               ⏹ 정지
             </button>
           )}
+        </section>
+
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>🔧 진단 도구 (인터프리터 우회)</h2>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 8 }}>
+            펌웨어 X{`{idx}{duty}`} 핀별 PWM 직접 변조 + 정방향 1바이트.
+            모터가 안 돌 때 회로 문제인지 인터프리터 문제인지 분리 진단.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            {MOTOR_IDS.map((id) => {
+              const cfg = MOTORS[id];
+              return (
+                <button
+                  key={id}
+                  onClick={() => onRawForce(id)}
+                  disabled={!isConnected || running !== null}
+                  style={{
+                    ...buttonBase,
+                    background: '#FFE0CC',
+                    flexDirection: 'column',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    opacity: (!isConnected || running !== null) ? 0.5 : 1,
+                  }}
+                >
+                  <div style={{ fontWeight: 900 }}>{id}</div>
+                  <div style={{ fontSize: 11 }}>D{cfg.pwmPin} 100% × 1초</div>
+                  <div style={{ fontSize: 10, color: palette.textMuted }}>
+                    X{cfg.pwmIndex}9 → {cfg.forwardByte}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         </section>
 
         <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
