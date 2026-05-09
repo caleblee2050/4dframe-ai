@@ -183,6 +183,7 @@ export default function PlayPage() {
   const [showCamera, setShowCamera] = useState(false);   // 카메라 동작 인식 토글
   // 카메라 제스처 → 보드 명령 매핑 (마지막 명령 sig 비교로 시리얼 포화 방지)
   const lastGestureSigRef = useRef<string>('');
+  const [gestureStatus, setGestureStatus] = useState<string>('');   // 화면 진단
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const suggestionsRef = useRef<HTMLDivElement | null>(null);
 
@@ -650,23 +651,37 @@ export default function PlayPage() {
   // sig 비교로 같은 명령 반복 송신 방지.
   const onCameraGesture = useCallback((g: { type: 'hand_open' | 'head_tilt'; openness?: number; dx?: number }) => {
     if (g.type !== 'hand_open' || g.openness === undefined) return;
-    const b = useBoardStore.getState();
-    if (b.status !== 'connected') return;
     const o = g.openness;
+    const b = useBoardStore.getState();
 
-    // 손 모양 분류 — hysteresis 영역 (0.3~0.65) 은 마지막 명령 유지
+    // 손 모양 분류 — 실측 openness 가 0.4~0.6 범위가 흔해 임계값 낮춤
     let key: GestureKey | null = null;
-    if (o >= 0.65) key = 'hand_open';
-    else if (o <= 0.3) key = 'hand_fist';
-    if (!key) return;
+    if (o >= 0.55) key = 'hand_open';
+    else if (o <= 0.30) key = 'hand_fist';
 
-    if (lastGestureSigRef.current === key) return;
+    // 진단: 항상 화면에 현재 손 상태 표시
+    const keyLabel = key === 'hand_open' ? '🤚 활짝' : key === 'hand_fist' ? '✊ 주먹' : '🖐 중간';
+    if (b.status !== 'connected') {
+      setGestureStatus(`${keyLabel} (${(o * 100).toFixed(0)}%) — 보드 미연결`);
+      return;
+    }
+
+    if (!key) {
+      setGestureStatus(`${keyLabel} (${(o * 100).toFixed(0)}%)`);
+      return;
+    }
+
+    if (lastGestureSigRef.current === key) {
+      setGestureStatus(`${keyLabel} (${(o * 100).toFixed(0)}%) · 유지`);
+      return;
+    }
     lastGestureSigRef.current = key;
 
     const mapping = useGestureMappingStore.getState().mapping;
     const action = actionById(mapping[key]);
-    if (!action.bytes) return;
+    setGestureStatus(`${keyLabel} (${(o * 100).toFixed(0)}%) → ${action.emoji} ${action.label} [${action.bytes || '∅'}]`);
     console.log('[gesture]', key, '→', action.id, action.bytes);
+    if (!action.bytes) return;
     void b.send(action.bytes);
   }, []);
 
@@ -1017,6 +1032,17 @@ export default function PlayPage() {
               <div style={{ fontSize: 14, fontWeight: 800 }}>🖐 손 동작 매핑</div>
               <div style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.4 }}>
                 내 손 모양에 어떤 동작을 시킬지 직접 골라!
+              </div>
+
+              {/* 실시간 진단 — openness 값 + 매핑된 동작 */}
+              <div style={{
+                fontSize: 13, fontWeight: 800,
+                background: gestureStatus.includes('보드 미연결') ? '#FFE6E6' : palette.tileBlue,
+                border: border.brutal, borderRadius: radius.sm,
+                padding: '8px 10px',
+                minHeight: 36,
+              }}>
+                {gestureStatus || '🖐 손을 카메라에 비춰주세요'}
               </div>
 
               <GestureMapRow
