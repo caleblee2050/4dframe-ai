@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Joystick } from '@/components/play/Joystick';
+import { CameraPanel } from '@/components/play/CameraPanel';
 import { isV13Plus } from '@/lib/commands/commands';
 import { skillsForArtwork, type Skill } from '@/lib/skills/library';
 import { useCustomSkillsStore, type CustomSkill } from '@/lib/skills/customStore';
@@ -136,6 +137,9 @@ export default function PlayPage() {
   const [sayMessages, setSayMessages] = useState<Array<{ text: string; ts: number }>>([]);
   const [showTrace, setShowTrace] = useState(false);   // 실행 과정 펼침 여부
   const [showJoystick, setShowJoystick] = useState(false);   // 직접 조종 카드 표시 (작품 무관 토글)
+  const [showCamera, setShowCamera] = useState(false);   // 카메라 동작 인식 토글
+  // 카메라 제스처 → 보드 명령 매핑 (마지막 명령 sig 비교로 시리얼 포화 방지)
+  const lastGestureSigRef = useRef<string>('');
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const suggestionsRef = useRef<HTMLDivElement | null>(null);
 
@@ -479,7 +483,21 @@ export default function PlayPage() {
         console.log('[mic] end (stoppedByUser=' + stoppedByUserRef.current + ', restarts=' + restartCountRef.current + ')');
         if (stoppedByUserRef.current || restartCountRef.current >= MAX_MIC_RESTART) {
           setListening(false);
-          setMicStatus(stoppedByUserRef.current ? '' : '⏹ 자동 종료 (한도)');
+          if (stoppedByUserRef.current) {
+            setMicStatus('');
+          } else {
+            // 한도 초과 = 마이크가 음성 인식 못 함. 명확한 진단.
+            setMicStatus('❌ 음성 인식 안 됨');
+            alert(
+              '🎤 음성이 한 번도 인식되지 않았어요.\n\n' +
+              '확인해주세요:\n' +
+              '1. 시스템 마이크 입력 장치 (System Settings → Sound → Input)\n' +
+              '2. Chrome 사이트 마이크 권한 (자물쇠 → 마이크 → 허용)\n' +
+              '3. 다른 앱이 마이크 점유 중인지 (Zoom 등 종료)\n' +
+              '4. 인터넷 연결 (Web Speech API 는 Google 서버 통신)\n\n' +
+              '대신 키보드로 직접 입력해도 OK!'
+            );
+          }
           recognitionRef.current = null;
           return;
         }
@@ -487,7 +505,7 @@ export default function PlayPage() {
         setMicStatus(`🔄 재시도 ${restartCountRef.current}/${MAX_MIC_RESTART}`);
         setTimeout(() => {
           if (!stoppedByUserRef.current) startNew();
-        }, 300);   // delay 늘림 — Chrome SR engine 안정화
+        }, 300);
       };
 
       try {
@@ -583,6 +601,49 @@ export default function PlayPage() {
     }
     if (cmds.length > 0) void b.send(cmds.join(''));
   }, []);   // ★ deps 비움 — 이게 핵심 fix
+
+  // 🖐 카메라 제스처 → 보드 명령. 손 펼침 정도 (0~1) 를 작품별로 다르게 매핑.
+  //   악어 (서보): openness > 0.6 → 입 활짝 / < 0.3 → 입 다물기
+  //   그 외 (모터): openness ≥ 0.7 → spin 빠르게 / 0.4~0.7 → 보통 / < 0.3 → 정지
+  //   양쪽 모두 sig 비교로 같은 명령 반복 송신 방지.
+  const onCameraGesture = useCallback((g: { type: 'hand_open' | 'head_tilt'; openness?: number; dx?: number }) => {
+    if (g.type !== 'hand_open' || g.openness === undefined) return;
+    const b = useBoardStore.getState();
+    if (b.status !== 'connected') return;
+    const o = g.openness;
+
+    // 작품별 분기
+    const aw = (artworkRef.current ?? 'free');
+    if (aw === 'crocodile') {
+      // 입 (servo SA) — 활짝 펴면 입 위로 (%), 주먹이면 입 닫기 (5)
+      const sig = o > 0.6 ? 'OPEN' : o < 0.3 ? 'CLOSE' : 'MID';
+      if (lastGestureSigRef.current === sig) return;
+      lastGestureSigRef.current = sig;
+      if (sig === 'OPEN') void b.send('%%%');     // 입 위로 3 단계 (45°)
+      else if (sig === 'CLOSE') void b.send('555'); // 입 아래로 3 단계
+      return;
+    }
+
+    // 모터 작품 (viking / car_4wd / swing / ballerina / free)
+    const sig = o >= 0.7 ? 'FAST' : o >= 0.4 ? 'MID' : 'STOP';
+    if (lastGestureSigRef.current === sig) return;
+    lastGestureSigRef.current = sig;
+
+    if (sig === 'STOP') {
+      void b.send(GLOBAL.stopAll);
+      return;
+    }
+
+    const v13 = isV13Plus(b.lastBoot?.fw);
+    const cmds: string[] = [];
+    if (v13) cmds.push(sig === 'FAST' ? 'V9' : 'V6');
+    cmds.push('1');   // M1 forward (대표 모터)
+    void b.send(cmds.join(''));
+  }, []);
+
+  // artwork 가 useCallback deps 에 안 들어가도록 ref 로 staleness 방지
+  const artworkRef = useRef(artwork);
+  useEffect(() => { artworkRef.current = artwork; }, [artwork]);
 
   // ⌨️ 키보드 화살표 → 조이스틱 — 직접 조종 ON 또는 자동차 작품 시 활성.
   // textarea/input focus 중에는 무시 (입력 방해 X).
@@ -868,6 +929,17 @@ export default function PlayPage() {
           >
             🕹 직접 조종 {showJoystick ? 'ON' : 'OFF'}
           </button>
+          <button
+            onClick={() => setShowCamera((v) => !v)}
+            title="손 동작으로 조종 — 손 활짝 펴면 빠르게, 주먹 쥐면 정지"
+            style={{
+              ...btn(showCamera ? palette.tertiary : palette.tileBlue,
+                     showCamera ? '#fff' : palette.textMain),
+              padding: '8px 12px', fontSize: 13,
+            }}
+          >
+            🖐 손 동작 {showCamera ? 'ON' : 'OFF'}
+          </button>
         </section>
 
         {/* 🕹 직접 조종 — 토글 ON 시 또는 자동차 작품 시 노출 (차동 조향). */}
@@ -895,6 +967,45 @@ export default function PlayPage() {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 11, color: palette.textMuted }}>
                 ※ AI 와 동시에 사용해도 됩니다. 조이스틱이 가장 마지막에 보낸 명령이 이김.
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* 🖐 손 동작 인식 — 카메라 켜고 손 펼침 정도로 보드 조종 */}
+        {showCamera && (
+          <section style={{ ...card, display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ flex: '0 0 320px' }}>
+              <CameraPanel
+                onGesture={onCameraGesture}
+                colors={{
+                  primary: palette.primary,
+                  primaryDark: palette.textMain,
+                  primaryLight: palette.tilePink,
+                  border: palette.textMain,
+                  accent: palette.accent,
+                  textMuted: palette.textMuted,
+                }}
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>🖐 손 동작 조종</div>
+              <div style={{ fontSize: 12, color: palette.textMuted, lineHeight: 1.6 }}>
+                {artwork === 'crocodile' ? (
+                  <>
+                    🤚 <strong>손 활짝</strong> → 입 벌리기 (서보 SA ↑)<br/>
+                    ✊ <strong>주먹</strong> → 입 다물기 (서보 SA ↓)
+                  </>
+                ) : (
+                  <>
+                    🤚 <strong>손 활짝</strong> → 빠르게 회전 (V9)<br/>
+                    🖐 <strong>반쯤</strong> → 보통 (V6)<br/>
+                    ✊ <strong>주먹</strong> → 정지
+                  </>
+                )}
+              </div>
+              <div style={{ fontSize: 10, color: palette.textMuted, marginTop: 8 }}>
+                ※ 처음엔 모델 다운로드로 살짝 느려요. 이후엔 즉각 반응.
               </div>
             </div>
           </section>
