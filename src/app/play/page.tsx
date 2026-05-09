@@ -12,6 +12,7 @@ import { CameraPanel } from '@/components/play/CameraPanel';
 import { isV13Plus } from '@/lib/commands/commands';
 import { skillsForArtwork, type Skill } from '@/lib/skills/library';
 import { useCustomSkillsStore, type CustomSkill } from '@/lib/skills/customStore';
+import { useGestureMappingStore, ACTIONS, actionById, type GestureKey, type ActionId } from '@/lib/gestures/mappingStore';
 import { useBoardStore } from '@/lib/serial/webSerial';
 import { useCalibrationStore } from '@/lib/calibration/store';
 import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
@@ -47,6 +48,47 @@ const card: React.CSSProperties = {
   boxShadow: shadow.brutal,
   padding: 16,
 };
+
+// 손 동작 매핑 한 줄 (emoji + 라벨 + 동작 드롭다운)
+function GestureMapRow({
+  emoji, label, gesture, value, onChange, colors,
+}: {
+  emoji: string;
+  label: string;
+  gesture: GestureKey;
+  value: ActionId;
+  onChange: (v: ActionId) => void;
+  colors: { bg: string; panel: string; textMain: string; textMuted: string; accent: string };
+}) {
+  void gesture;   // 디버그용 (접두 표시 등). 현재는 미사용.
+  const current = actionById(value);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      background: colors.bg, padding: '8px 10px',
+      border: `2px solid ${colors.textMain}`, borderRadius: 8,
+    }}>
+      <span style={{ fontSize: 22 }}>{emoji}</span>
+      <span style={{ fontSize: 13, fontWeight: 800, minWidth: 56 }}>{label}</span>
+      <span style={{ fontSize: 13, color: colors.textMuted }}>→</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as ActionId)}
+        style={{
+          flex: 1, fontFamily: 'inherit', fontSize: 13, fontWeight: 700,
+          background: colors.panel, color: colors.textMain,
+          border: `2px solid ${colors.textMain}`, borderRadius: 6,
+          padding: '6px 8px', cursor: 'pointer',
+        }}
+      >
+        {ACTIONS.map((a) => (
+          <option key={a.id} value={a.id}>{a.emoji} {a.label}</option>
+        ))}
+      </select>
+      <span style={{ fontSize: 18 }}>{current.emoji}</span>
+    </div>
+  );
+}
 
 // 사진 dataURL → maxSide 픽셀 너비/높이로 리사이즈. JPEG 0.85 품질.
 async function resizeImageDataURL(dataURL: string, maxSide: number): Promise<string> {
@@ -120,6 +162,7 @@ export default function PlayPage() {
   const cal = useCalibrationStore();
   const sound = useSoundStore();
   const customSkills = useCustomSkillsStore();
+  const gestureMapping = useGestureMappingStore();
 
   const [artwork, setArtwork] = useState<PromptContext['artwork']>('free');
   const [distanceReactivity, setDistanceReactivity] = useState(false);
@@ -602,48 +645,30 @@ export default function PlayPage() {
     if (cmds.length > 0) void b.send(cmds.join(''));
   }, []);   // ★ deps 비움 — 이게 핵심 fix
 
-  // 🖐 카메라 제스처 → 보드 명령. 손 펼침 정도 (0~1) 를 작품별로 다르게 매핑.
-  //   악어 (서보): openness > 0.6 → 입 활짝 / < 0.3 → 입 다물기
-  //   그 외 (모터): openness ≥ 0.7 → spin 빠르게 / 0.4~0.7 → 보통 / < 0.3 → 정지
-  //   양쪽 모두 sig 비교로 같은 명령 반복 송신 방지.
+  // 🖐 카메라 제스처 → 보드 명령. 학생이 매핑 store 에서 정한 동작 송신.
+  // openness >= 0.65 = 활짝(hand_open), <= 0.3 = 주먹(hand_fist), 사이는 무시 (전이 영역).
+  // sig 비교로 같은 명령 반복 송신 방지.
   const onCameraGesture = useCallback((g: { type: 'hand_open' | 'head_tilt'; openness?: number; dx?: number }) => {
     if (g.type !== 'hand_open' || g.openness === undefined) return;
     const b = useBoardStore.getState();
     if (b.status !== 'connected') return;
     const o = g.openness;
 
-    // 작품별 분기
-    const aw = (artworkRef.current ?? 'free');
-    if (aw === 'crocodile') {
-      // 입 (servo SA) — 활짝 펴면 입 위로 (%), 주먹이면 입 닫기 (5)
-      const sig = o > 0.6 ? 'OPEN' : o < 0.3 ? 'CLOSE' : 'MID';
-      if (lastGestureSigRef.current === sig) return;
-      lastGestureSigRef.current = sig;
-      if (sig === 'OPEN') void b.send('%%%');     // 입 위로 3 단계 (45°)
-      else if (sig === 'CLOSE') void b.send('555'); // 입 아래로 3 단계
-      return;
-    }
+    // 손 모양 분류 — hysteresis 영역 (0.3~0.65) 은 마지막 명령 유지
+    let key: GestureKey | null = null;
+    if (o >= 0.65) key = 'hand_open';
+    else if (o <= 0.3) key = 'hand_fist';
+    if (!key) return;
 
-    // 모터 작품 (viking / car_4wd / swing / ballerina / free)
-    const sig = o >= 0.7 ? 'FAST' : o >= 0.4 ? 'MID' : 'STOP';
-    if (lastGestureSigRef.current === sig) return;
-    lastGestureSigRef.current = sig;
+    if (lastGestureSigRef.current === key) return;
+    lastGestureSigRef.current = key;
 
-    if (sig === 'STOP') {
-      void b.send(GLOBAL.stopAll);
-      return;
-    }
-
-    const v13 = isV13Plus(b.lastBoot?.fw);
-    const cmds: string[] = [];
-    if (v13) cmds.push(sig === 'FAST' ? 'V9' : 'V6');
-    cmds.push('1');   // M1 forward (대표 모터)
-    void b.send(cmds.join(''));
+    const mapping = useGestureMappingStore.getState().mapping;
+    const action = actionById(mapping[key]);
+    if (!action.bytes) return;
+    console.log('[gesture]', key, '→', action.id, action.bytes);
+    void b.send(action.bytes);
   }, []);
-
-  // artwork 가 useCallback deps 에 안 들어가도록 ref 로 staleness 방지
-  const artworkRef = useRef(artwork);
-  useEffect(() => { artworkRef.current = artwork; }, [artwork]);
 
   // ⌨️ 키보드 화살표 → 조이스틱 — 직접 조종 ON 또는 자동차 작품 시 활성.
   // textarea/input focus 중에는 무시 (입력 방해 X).
@@ -988,24 +1013,41 @@ export default function PlayPage() {
                 }}
               />
             </div>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 6 }}>🖐 손 동작 조종</div>
-              <div style={{ fontSize: 12, color: palette.textMuted, lineHeight: 1.6 }}>
-                {artwork === 'crocodile' ? (
-                  <>
-                    🤚 <strong>손 활짝</strong> → 입 벌리기 (서보 SA ↑)<br/>
-                    ✊ <strong>주먹</strong> → 입 다물기 (서보 SA ↓)
-                  </>
-                ) : (
-                  <>
-                    🤚 <strong>손 활짝</strong> → 빠르게 회전 (V9)<br/>
-                    🖐 <strong>반쯤</strong> → 보통 (V6)<br/>
-                    ✊ <strong>주먹</strong> → 정지
-                  </>
-                )}
+            <div style={{ flex: 1, minWidth: 240, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ fontSize: 14, fontWeight: 800 }}>🖐 손 동작 매핑</div>
+              <div style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.4 }}>
+                내 손 모양에 어떤 동작을 시킬지 직접 골라!
               </div>
-              <div style={{ fontSize: 10, color: palette.textMuted, marginTop: 8 }}>
-                ※ 처음엔 모델 다운로드로 살짝 느려요. 이후엔 즉각 반응.
+
+              <GestureMapRow
+                emoji="🤚"
+                label="손 활짝"
+                gesture="hand_open"
+                value={gestureMapping.mapping.hand_open}
+                onChange={(v) => gestureMapping.setMapping('hand_open', v)}
+                colors={palette}
+              />
+              <GestureMapRow
+                emoji="✊"
+                label="주먹"
+                gesture="hand_fist"
+                value={gestureMapping.mapping.hand_fist}
+                onChange={(v) => gestureMapping.setMapping('hand_fist', v)}
+                colors={palette}
+              />
+
+              <button
+                onClick={() => gestureMapping.reset()}
+                style={{
+                  alignSelf: 'flex-start', fontSize: 11, color: palette.textMuted,
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  textDecoration: 'underline', padding: 0,
+                }}
+              >
+                기본 매핑으로
+              </button>
+              <div style={{ fontSize: 10, color: palette.textMuted, marginTop: 4 }}>
+                ※ 처음엔 모델 다운로드 살짝 느려요. 이후 즉각 반응.
               </div>
             </div>
           </section>
