@@ -121,6 +121,25 @@ export interface PlaySoundStep extends BaseStep {
   volume?: number;
 }
 
+// 한국 동요/멜로디를 Web Audio API 사인파로 합성. 학생이 "학교종 맞춰 흔들어줘" 등 요청 시 사용.
+// AI 가 tune 안에 동작 step 을 동시에 묶어 보내면 멜로디와 동작이 동기화.
+export type TuneId =
+  | 'school_bell'    // 학교종이 땡땡땡
+  | 'twinkle'        // 반짝반짝 작은별
+  | 'butterfly'      // 나비야
+  | 'mountain_rabbit' // 산토끼
+  | 'three_bears'    // 곰 세 마리
+  | 'beep_pattern';  // 단순 띠띠띠 패턴 (전자음)
+
+export interface PlayTuneStep extends BaseStep {
+  do: 'play_tune';
+  tune: TuneId;
+  // 1.0 = 원래 속도. 학생 "더 빠르게" 시 1.5~2.0.
+  tempo?: number;
+  // 멜로디 음 길이별 모터/서보 동작이 같이 가도록 — true 시 클라이언트는 멜로디 길이만큼만 wait
+  await_melody?: boolean;
+}
+
 export type Step =
   | SpinStep
   | DriveStep
@@ -132,7 +151,8 @@ export type Step =
   | RepeatStep
   | SayStep
   | CalibrateStep
-  | PlaySoundStep;
+  | PlaySoundStep
+  | PlayTuneStep;
 
 // ─────────────────────────────────────────────────────────────
 // 프로그램 (AI가 한 번에 뱉는 단위)
@@ -237,6 +257,11 @@ function validateStep(step: Step, path: string): void {
       if (!['cheer','engine_start','engine_run','creak','splash','whoosh','crocodile','beep','ding','wobble'].includes(step.sound))
         throw new DslValidationError(`${path}.sound`, `잘못된 sound: ${step.sound}`);
       if (step.volume !== undefined) assertInRange(`${path}.volume`, step.volume, 0, 1);
+      return;
+    case 'play_tune':
+      if (!['school_bell','twinkle','butterfly','mountain_rabbit','three_bears','beep_pattern'].includes(step.tune))
+        throw new DslValidationError(`${path}.tune`, `잘못된 tune: ${step.tune}`);
+      if (step.tempo !== undefined) assertInRange(`${path}.tempo`, step.tempo, 0.5, 3);
       return;
     default: {
       const exhaustive: never = step;

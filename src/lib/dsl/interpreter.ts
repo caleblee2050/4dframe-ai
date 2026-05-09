@@ -11,7 +11,7 @@
 import type {
   Program, Step, MotorId, SpeedLabel,
   SpinStep, DriveStep, ServoStep, SpeedStep, StopStep, WaitStep,
-  WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep, PlaySoundStep,
+  WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep, PlaySoundStep, PlayTuneStep,
 } from './schema';
 import {
   MOTORS, SERVOS, GLOBAL, SPEED_BASE_LEVEL, pwmCommand,
@@ -23,6 +23,7 @@ export type InterpreterEvent =
   | { type: 'say'; text: string }
   | { type: 'calibrate'; reason: CalibrateStep['reason'] }
   | { type: 'play_sound'; sound: PlaySoundStep['sound']; volume: number }
+  | { type: 'play_tune'; tune: PlayTuneStep['tune']; tempo: number; await_melody: boolean }
   | { type: 'step_start'; step: Step; index: number }
   | { type: 'step_end'; step: Step; index: number }
   | { type: 'aborted' }
@@ -119,6 +120,8 @@ async function executeStep(step: Step, ctx: StepCtx, path: string): Promise<void
       return execCalibrate(step, ctx);
     case 'play_sound':
       return execPlaySound(step, ctx);
+    case 'play_tune':
+      return execPlayTune(step, ctx);
   }
 }
 
@@ -248,6 +251,17 @@ async function execCalibrate(step: CalibrateStep, ctx: StepCtx) {
 async function execPlaySound(step: PlaySoundStep, ctx: StepCtx) {
   // 효과음은 짧고 분위기용이라 await 안 함 — 다음 step 과 동시 진행.
   ctx.emit({ type: 'play_sound', sound: step.sound, volume: step.volume ?? 1.0 });
+}
+
+async function execPlayTune(step: PlayTuneStep, ctx: StepCtx) {
+  // await_melody=true 면 멜로디 끝까지 기다림 (학생 "음악 끝나면 다음 동작" 의도).
+  // 기본은 false — 멜로디와 모터 동작이 동시 진행 (학생 "음악 맞춰서 흔들어줘" 의도).
+  const awaitMelody = step.await_melody ?? false;
+  if (awaitMelody) {
+    await ctx.emit({ type: 'play_tune', tune: step.tune, tempo: step.tempo ?? 1.0, await_melody: true });
+  } else {
+    ctx.emit({ type: 'play_tune', tune: step.tune, tempo: step.tempo ?? 1.0, await_melody: false });
+  }
 }
 
 async function safeStop(send: (p: string) => Promise<void>) {

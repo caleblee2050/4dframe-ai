@@ -1,21 +1,45 @@
 'use client';
 
-// 학생용 메인 페이지 — 자연어로 4D프레임 작품을 동작시킨다.
+// 학생용 메인 페이지 (디자인 원본 복원)
 //
-// 흐름: 자연어 입력 → /api/chat 스트리밍 → JSON DSL 누적 → validateProgram → 미리보기 → ▶ 실행 → 보드 송신
-// 보조: 모터 캘리브 카드 (시동 V 조절), 거리센서 위젯 + 거리 반응 토글, 보드 연결 헤더.
+// 원본: haqizza/mechatronics_controller (Flutter, Material lightBlue)
+//   - 가로 레이아웃, 좌(가상 조이스틱) + 중(속도 게이지 + 자연어 입력) + 우(서보×2)
+// 우리 적용: USB Serial + 펌웨어 v1.0/v1.3 호환 어휘 + AI 자연어 + 음악(전자음) + 카메라 인터랙티브
+//
+// 페르소나: 유치원~초등 저학년. 코딩 설명 없음. 친근한 완구 톤.
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useBoardStore } from '@/lib/serial/webSerial';
 import { useCalibrationStore } from '@/lib/calibration/store';
 import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
-import { validateProgram, type Program, type Step, type MotorId } from '@/lib/dsl/schema';
-import { palette, radius, shadow, border, motion as m } from '@/lib/design/tokens';
-import { MOTORS, GLOBAL } from '@/lib/commands/commands';
+import { validateProgram, type Program } from '@/lib/dsl/schema';
+import { GLOBAL } from '@/lib/commands/commands';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
-import { useSoundStore, playEffect, speakText, stopSpeaking, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
+import {
+  useSoundStore, playEffect, speakText, stopSpeaking, stripAudioTags, prefetchProgramAudio,
+} from '@/lib/sound/soundManager';
+import { playMelody, stopMelody, TUNE_LABELS } from '@/lib/sound/melodySynth';
+import { Joystick } from '@/components/play/Joystick';
+import { SpeedGauge } from '@/components/play/SpeedGauge';
+import { ServoGauge } from '@/components/play/ServoGauge';
+import { CameraPanel } from '@/components/play/CameraPanel';
 
-const MOTOR_IDS: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
+// Material lightBlue 톤
+const C = {
+  bg: '#FAFAFA',
+  panel: '#FFFFFF',
+  primary: '#03A9F4',       // lightBlue 500
+  primaryDark: '#0288D1',
+  primaryLight: '#B3E5FC',
+  accent: '#FF9800',        // orange 500
+  text: '#212121',
+  textMuted: '#757575',
+  border: '#E0E0E0',
+  shadow: '0 2px 8px rgba(0,0,0,0.08)',
+  shadowLg: '0 4px 16px rgba(0,0,0,0.12)',
+  ok: '#4CAF50',
+  err: '#F44336',
+};
 
 const ARTWORKS: Array<{ id: PromptContext['artwork']; label: string; emoji: string }> = [
   { id: 'free', label: '자유', emoji: '🛠️' },
@@ -25,58 +49,21 @@ const ARTWORKS: Array<{ id: PromptContext['artwork']; label: string; emoji: stri
   { id: 'crocodile', label: '악어', emoji: '🐊' },
 ];
 
-const SAMPLE_PROMPTS = [
-  '바이킹을 더 신나게 흔들어줘',
-  '자동차로 앞으로 1초 갔다가 오른쪽으로 돌아줘',
-  'M1을 천천히 3초 돌려줘',
-  '악어 입을 한 번 벌렸다 다물게 해줘',
+const TUNE_CHIPS: Array<{ id: keyof typeof TUNE_LABELS; label: string }> = [
+  { id: 'school_bell', label: '🔔 학교종' },
+  { id: 'twinkle', label: '⭐ 반짝반짝' },
+  { id: 'butterfly', label: '🦋 나비야' },
+  { id: 'mountain_rabbit', label: '🐰 산토끼' },
+  { id: 'three_bears', label: '🐻 곰 세 마리' },
+  { id: 'beep_pattern', label: '🎵 띠띠띠' },
 ];
 
-const card: React.CSSProperties = {
-  background: palette.panel,
-  border: border.brutal,
-  borderRadius: radius.md,
-  boxShadow: shadow.brutal,
-  padding: 16,
-};
-
-const stepIcon: Record<Step['do'], string> = {
-  spin: '🔄', drive: '🚗', servo: '🎚', speed: '⚡',
-  stop: '⏹', wait: '⏱', wait_for_distance: '👀', repeat: '🔁',
-  say: '💬', calibrate: '🔧', play_sound: '🔊',
-};
-
-function describeStep(step: Step): string {
-  switch (step.do) {
-    case 'spin': {
-      const dir = step.direction === 'reverse' ? ' 거꾸로' : '';
-      const dur = step.duration_ms ? ` ${(step.duration_ms / 1000).toFixed(1)}초` : '';
-      return `${step.motor} 를${dir} ${step.speed} 속도로 돌림${dur}`;
-    }
-    case 'drive': {
-      const map = { forward: '앞으로', backward: '뒤로', turn_left: '왼쪽 회전', turn_right: '오른쪽 회전' };
-      const dur = step.duration_ms ? ` ${(step.duration_ms / 1000).toFixed(1)}초` : '';
-      return `자동차 ${map[step.heading]} ${step.speed}${dur}`;
-    }
-    case 'servo':
-      if (step.to_degrees !== undefined) return `서보 ${step.servo} 를 ${step.to_degrees}도로`;
-      return `서보 ${step.servo} ${step.step! > 0 ? '+' : ''}${step.step! * 15}도`;
-    case 'speed': return `기본 속도 → ${step.level}`;
-    case 'stop': return step.scope && step.scope !== 'all' ? `${step.scope} 정지` : '전체 정지';
-    case 'wait': return `${(step.ms / 1000).toFixed(1)}초 대기`;
-    case 'wait_for_distance': return `${step.cm_below}cm 안에 들어올 때까지 대기`;
-    case 'repeat': return `${step.times}번 반복 (안에 ${step.steps.length}개 동작)`;
-    case 'say': return `학생에게 한마디: "${step.text}"`;
-    case 'calibrate':
-      return ({
-        motor_individual_variance: '모터 개체차 안내',
-        motor_direction_mirror: '모터 방향 안내',
-        servo_power: '서보 전원 (9V) 점검 안내',
-      })[step.reason];
-    case 'play_sound':
-      return `효과음: ${step.sound}`;
-  }
-}
+const SAMPLE_PROMPTS = [
+  '바이킹 신나게 흔들어줘',
+  '학교종이 땡땡땡에 맞춰 흔들어줘',
+  '자동차로 앞으로 갔다가 오른쪽으로',
+  '악어 입 으르렁',
+];
 
 export default function PlayPage() {
   const board = useBoardStore();
@@ -87,16 +74,14 @@ export default function PlayPage() {
   const [distanceReactivity, setDistanceReactivity] = useState(false);
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [streamedText, setStreamedText] = useState('');
   const [program, setProgram] = useState<Program | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
-
-  // 대화 누적 — AI 와의 코딩 세션 history
   const [history, setHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
 
   const [isExecuting, setIsExecuting] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState<number | null>(null);
   const [sayMessages, setSayMessages] = useState<Array<{ text: string; ts: number }>>([]);
+  const [cameraOn, setCameraOn] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const isConnected = board.status === 'connected';
@@ -112,12 +97,9 @@ export default function PlayPage() {
     const prompt = rawPrompt.trim();
     if (!prompt || isGenerating) return;
     setIsGenerating(true);
-    setStreamedText('');
     setProgram(null);
     setGenError(null);
     setInput('');
-
-    // 사용자 메시지 history 에 즉시 추가 (낙관적 업데이트)
     const newHistory = [...history, { role: 'user' as const, content: prompt }];
     setHistory(newHistory);
 
@@ -127,9 +109,7 @@ export default function PlayPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt, context: promptContext, history }),
       });
-      if (!res.ok || !res.body) {
-        throw new Error(`AI 응답 실패: ${res.status} ${await res.text()}`);
-      }
+      if (!res.ok || !res.body) throw new Error(`AI 응답 실패: ${res.status}`);
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let acc = '';
@@ -137,15 +117,9 @@ export default function PlayPage() {
         const { value, done } = await reader.read();
         if (done) break;
         acc += decoder.decode(value, { stream: true });
-        setStreamedText(acc);
       }
       const cleaned = acc.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(cleaned);
-      } catch (e) {
-        throw new Error(`JSON 파싱 실패: ${e instanceof Error ? e.message : String(e)}\n\n원문:\n${cleaned}`);
-      }
+      const parsed = JSON.parse(cleaned);
       const valid = validateProgram(parsed);
       setProgram(valid);
       setHistory([...newHistory, { role: 'assistant', content: cleaned }]);
@@ -157,15 +131,8 @@ export default function PlayPage() {
     }
   };
 
-  const onGenerate = () => sendPrompt(input);
-
   const onResetSession = () => {
-    setHistory([]);
-    setProgram(null);
-    setStreamedText('');
-    setGenError(null);
-    setSayMessages([]);
-    setInput('');
+    setHistory([]); setProgram(null); setGenError(null); setSayMessages([]); setInput('');
   };
 
   const onExecute = async () => {
@@ -178,8 +145,6 @@ export default function PlayPage() {
     setSayMessages([]);
     setCurrentStepIndex(null);
 
-    // intro 음성을 끝까지 await 한 뒤 첫 step 시작.
-    // → "음성으로 먼저 설명 → 동작" 흐름을 학생 의도대로 강제.
     if (program.intro) {
       setSayMessages([{ text: stripAudioTags(program.intro), ts: Date.now() }]);
       await speakText(program.intro);
@@ -192,19 +157,19 @@ export default function PlayPage() {
         if (e.type === 'step_start') setCurrentStepIndex(e.index);
         else if (e.type === 'step_end') setCurrentStepIndex(null);
         else if (e.type === 'say') {
-          // UI 표시는 audio tag 제거. 음성은 원문 그대로 (오디오 태그 톤 반영).
           setSayMessages((s) => [...s, { text: stripAudioTags(e.text), ts: Date.now() }]);
-          // ❗ 음성 끝까지 await — 인터프리터가 이 Promise 를 기다려 다음 step 으로.
           await speakText(e.text);
         }
-        else if (e.type === 'play_sound') {
-          playEffect(e.sound, e.volume);
+        else if (e.type === 'play_sound') playEffect(e.sound, e.volume);
+        else if (e.type === 'play_tune') {
+          if (e.await_melody) await playMelody(e.tune, e.tempo, sound.muted);
+          else void playMelody(e.tune, e.tempo, sound.muted);
         }
         else if (e.type === 'calibrate') {
           const msg = ({
-            motor_individual_variance: '모터마다 시동 V 가 달라요. 안 돌면 + 로 한 칸씩 올려보세요.',
-            motor_direction_mirror: '모터가 거꾸로 돌면 모터 카드의 [정방향/역방향] 버튼을 누르세요.',
-            servo_power: '서보가 약해요. 9V 배터리가 꽂혀 있는지 확인해주세요.',
+            motor_individual_variance: '모터마다 시동 V가 달라요. 안 돌면 + 눌러봐요.',
+            motor_direction_mirror: '거꾸로 돌면 디버그 보드에서 방향 바꿔봐요.',
+            servo_power: '9V 배터리 꽂혀 있나 봐줘요!',
           })[e.reason];
           setSayMessages((s) => [...s, { text: `🔧 ${msg}`, ts: Date.now() }]);
         }
@@ -217,430 +182,263 @@ export default function PlayPage() {
   const onStopExecution = async () => {
     abortRef.current?.abort();
     stopSpeaking();
+    stopMelody();
     if (isConnected) { try { await board.send(GLOBAL.stopAll); } catch {} }
     setIsExecuting(false);
   };
 
-  const onAdjustThreshold = (motor: MotorId, delta: 1 | -1) => {
-    const cur = cal.current.startThreshold[motor];
-    const next = Math.max(0, Math.min(9, cur + delta));
-    if (next !== cur) cal.setStartThreshold(motor, next);
-  };
-
-  const onTestStart = async (motor: MotorId) => {
+  // 수동 조종 — 시리얼 직접 송신
+  const sendByte = async (b: string) => {
     if (!isConnected) return;
-    const cfg = MOTORS[motor];
-    const level = cal.current.startThreshold[motor];
-    await board.send(`X${cfg.pwmIndex}${level}`);
-    await new Promise((r) => setTimeout(r, 30));
-    await board.send(cfg.forwardByte);
-    setTimeout(() => { void board.send(GLOBAL.stopAll); }, 1000);
+    try { await board.send(b); } catch {}
   };
 
-  const onToggleDir = async (motor: MotorId) => {
-    if (isConnected) await board.send(MOTORS[motor].dirToggleSeq);
-    cal.toggleDir(motor);
+  // 카메라 인터랙티브 콜백 — MediaPipe 가 손/얼굴 검출하면 호출
+  const onCameraGesture = async (gesture: { type: 'hand_open'; openness: number } | { type: 'head_tilt'; dx: number }) => {
+    if (!isConnected) return;
+    if (gesture.type === 'hand_open') {
+      // 손 펼침 정도 (0~1) → 서보 SA 각도 (펼치면 +15도, 오므리면 -15도)
+      // 임계값 기반 단순 매핑 — 0.6 이상 펼침 = +15도, 0.3 이하 = -15도
+      if (gesture.openness > 0.6) await sendByte('%');
+      else if (gesture.openness < 0.3) await sendByte('5');
+    } else if (gesture.type === 'head_tilt') {
+      // 머리 좌우 기울임 → 자동차 방향
+      if (gesture.dx > 0.2) await sendByte('D');
+      else if (gesture.dx < -0.2) await sendByte('A');
+      else await sendByte('0');
+    }
+  };
+
+  const cardStyle: React.CSSProperties = {
+    background: C.panel,
+    border: `1px solid ${C.border}`,
+    borderRadius: 12,
+    boxShadow: C.shadow,
+    padding: 16,
   };
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        background: palette.bg,
-        backgroundImage: 'radial-gradient(#E8E0CE 2px, transparent 2px)',
-        backgroundSize: '30px 30px',
-        color: palette.textMain,
-        padding: 24,
-        fontFamily: "'Nunito', system-ui, sans-serif",
-        fontWeight: 600,
-      }}
-    >
-      <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-        {/* 헤더 + 보드 연결 */}
-        <header style={{ ...card, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: radius.sm,
-            background: palette.secondary, border: border.brutal,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900,
-          }}>4D</div>
-          <div style={{ flex: 1 }}>
-            <h1 style={{ fontSize: 20, fontWeight: 900, margin: 0 }}>4D프레임 AI 짝코더</h1>
-            <div style={{ fontSize: 12, color: palette.textMuted, marginTop: 4 }}>
-              내가 만든 작품을 말로 움직여 보세요.
-            </div>
+    <main style={{
+      minHeight: '100vh',
+      background: C.bg,
+      color: C.text,
+      fontFamily: "'Outfit', 'Noto Sans KR', system-ui, sans-serif",
+      fontWeight: 500,
+    }}>
+      {/* 상단 AppBar */}
+      <header style={{
+        background: C.primary,
+        color: '#fff',
+        padding: '12px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        boxShadow: C.shadowLg,
+      }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: '#fff', color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 14 }}>4D</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 16, fontWeight: 700 }}>4DFrame 친구</div>
+          <div style={{ fontSize: 11, opacity: 0.85 }}>
+            {board.lastBoot ? `${board.lastBoot.boardId} / FW${board.lastBoot.fw}` : '말로 작품을 움직여 보세요'}
           </div>
-          {!isConnected ? (
-            <button
-              onClick={() => board.connect()}
-              style={btn(palette.tertiary, '#fff')}
-              disabled={board.status === 'requesting' || board.status === 'opening'}
-            >
-              {board.status === 'requesting' ? '포트 선택 중…' :
-               board.status === 'opening' ? '연결 중…' : '🔌 보드 연결'}
+        </div>
+        <button onClick={() => sound.toggleMute()} title={sound.muted ? '소리 켜기' : '소리 끄기'}
+          style={iconBtn}>{sound.muted ? '🔇' : '🔊'}</button>
+        <button onClick={() => setCameraOn(!cameraOn)} title="카메라 인터랙티브"
+          style={{ ...iconBtn, background: cameraOn ? C.accent : 'rgba(255,255,255,0.2)' }}>📷</button>
+        {history.length > 0 && (
+          <button onClick={onResetSession} style={iconBtn} title="새로 시작">🔄</button>
+        )}
+        {!isConnected ? (
+          <button onClick={() => board.connect()}
+            disabled={board.status === 'requesting' || board.status === 'opening'}
+            style={primaryBtn}>
+            {board.status === 'requesting' ? '포트 선택 중…' :
+             board.status === 'opening' ? '연결 중…' : '🔌 보드 연결'}
+          </button>
+        ) : (
+          <button onClick={() => board.disconnect()} style={{ ...primaryBtn, background: '#fff', color: C.err }}>
+            연결 끊기
+          </button>
+        )}
+      </header>
+
+      {board.errorMessage && (
+        <div style={{ background: '#FFEBEE', color: C.err, padding: '10px 20px', fontSize: 13, whiteSpace: 'pre-wrap' }}>
+          ⚠ {board.errorMessage}
+        </div>
+      )}
+
+      <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+        {/* 작품 선택 + 거리 반응 */}
+        <section style={{ ...cardStyle, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ fontSize: 12, color: C.textMuted, fontWeight: 700 }}>내 작품</div>
+          {ARTWORKS.map((a) => (
+            <button key={a.id} onClick={() => setArtwork(a.id)}
+              style={{
+                ...chipBtn,
+                background: artwork === a.id ? C.primary : '#fff',
+                color: artwork === a.id ? '#fff' : C.text,
+                borderColor: artwork === a.id ? C.primary : C.border,
+              }}>
+              {a.emoji} {a.label}
             </button>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 12, color: palette.textMuted }}>
-                {board.lastBoot ? `${board.lastBoot.boardId} / FW${board.lastBoot.fw}` : 'connected'}
-              </span>
-              <button onClick={() => board.disconnect()} style={btn(palette.primary, '#fff')}>연결 끊기</button>
-            </div>
-          )}
-        </header>
+          ))}
+          <div style={{ flex: 1 }} />
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12,
+            background: distanceReactivity ? '#E8F5E9' : '#FAFAFA',
+            border: `1px solid ${distanceReactivity ? C.ok : C.border}`,
+            borderRadius: 999, padding: '6px 12px',
+          }}>
+            <input type="checkbox" checked={distanceReactivity}
+              onChange={(e) => setDistanceReactivity(e.target.checked)} />
+            👀 거리 반응
+          </label>
+        </section>
 
-        {board.errorMessage && (
-          <div style={{ ...card, background: '#FFE6E6', borderColor: palette.primary }}>
-            <strong style={{ color: palette.primary }}>오류:</strong> {board.errorMessage}
-          </div>
+        {/* 카메라 패널 (토글 시 등장) */}
+        {cameraOn && (
+          <CameraPanel onGesture={onCameraGesture} colors={C} />
         )}
 
-        {/* 작품 선택 + 거리 반응 토글 */}
-        <section style={{ ...card, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <div>
-            <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 6 }}>내 작품</div>
+        {/* 자연어 입력 */}
+        <section style={cardStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ fontSize: 14, fontWeight: 700 }}>💬 친구한테 말하기</div>
+            {history.length > 0 && (
+              <span style={{ fontSize: 11, color: C.textMuted }}>{Math.ceil(history.length / 2)}번째 이야기</span>
+            )}
+          </div>
+          <textarea value={input} onChange={(e) => setInput(e.target.value)}
+            placeholder="예: 바이킹 신나게 흔들어줘 / 학교종 노래로 흔들어줘"
+            disabled={isGenerating}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendPrompt(input); }}
+            style={{
+              width: '100%', minHeight: 60, fontFamily: 'inherit', fontSize: 16, fontWeight: 500,
+              padding: 12, border: `1px solid ${C.border}`, borderRadius: 10, background: '#FAFAFA',
+              resize: 'vertical', outline: 'none',
+            }} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+            <button onClick={() => sendPrompt(input)}
+              disabled={isGenerating || input.trim().length === 0}
+              style={{
+                ...primaryBtn, background: C.primary,
+                opacity: (isGenerating || input.trim().length === 0) ? 0.5 : 1,
+              }}>
+              {isGenerating ? '생각 중…' : '🪄 보내기'}
+            </button>
+            {SAMPLE_PROMPTS.map((p) => (
+              <button key={p} onClick={() => setInput(p)} disabled={isGenerating}
+                style={{ ...chipBtn, fontSize: 11, padding: '4px 10px' }}>{p}</button>
+            ))}
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 4 }}>🎵 노래 골라서 같이 움직이게:</div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {ARTWORKS.map((a) => (
-                <button
-                  key={a.id}
-                  onClick={() => setArtwork(a.id)}
-                  style={{
-                    ...btn(artwork === a.id ? palette.tertiary : palette.panel,
-                            artwork === a.id ? '#fff' : palette.textMain),
-                    padding: '6px 10px', fontSize: 13,
-                  }}
-                >
-                  {a.emoji} {a.label}
+              {TUNE_CHIPS.map((t) => (
+                <button key={t.id}
+                  onClick={() => sendPrompt(`${t.label} 음악에 맞춰서 ${ARTWORKS.find(a => a.id === artwork)?.label || '작품'} 움직여줘`)}
+                  disabled={isGenerating}
+                  style={{ ...chipBtn, fontSize: 12, padding: '6px 12px', background: '#FFF3E0' }}>
+                  {t.label}
                 </button>
               ))}
             </div>
           </div>
-          <div style={{ flex: 1 }} />
-          <label style={{
-            display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-            background: distanceReactivity ? palette.accent : palette.tilePink,
-            border: border.brutal, borderRadius: radius.sm, padding: '8px 12px',
-            boxShadow: shadow.brutalSm,
-          }}>
-            <input
-              type="checkbox"
-              checked={distanceReactivity}
-              onChange={(e) => setDistanceReactivity(e.target.checked)}
-              style={{ width: 18, height: 18 }}
-            />
-            <span style={{ fontWeight: 800, fontSize: 13 }}>👀 거리 반응 모드</span>
-          </label>
-          <button
-            onClick={() => sound.toggleMute()}
-            title={sound.muted ? '소리 켜기' : '소리 끄기'}
-            style={{
-              fontFamily: 'inherit', fontWeight: 800, fontSize: 13,
-              background: sound.muted ? palette.tilePink : palette.tileBlue,
-              border: border.brutal, borderRadius: radius.sm,
-              padding: '8px 12px', cursor: 'pointer',
-              boxShadow: shadow.brutalSm,
-            }}
-          >
-            {sound.muted ? '🔇 소리 꺼짐' : '🔊 소리 켜짐'}
-          </button>
         </section>
 
-        {/* 자연어 입력 */}
-        <section style={card}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ fontSize: 14, fontWeight: 800 }}>
-              💬 짝코더와 이야기하기
-              {history.length > 0 && (
-                <span style={{ fontSize: 11, color: palette.textMuted, marginLeft: 8, fontWeight: 600 }}>
-                  · 이번 세션 {Math.floor(history.length / 2) + (history.length % 2)}턴
-                </span>
-              )}
-            </div>
-            {history.length > 0 && (
-              <button
-                onClick={onResetSession}
-                style={{
-                  fontFamily: 'inherit', fontWeight: 700, fontSize: 11,
-                  background: palette.panel, border: border.brutal, borderRadius: radius.sm,
-                  padding: '4px 10px', cursor: 'pointer',
-                }}
-              >🔄 새로 시작</button>
-            )}
-          </div>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="예: 바이킹을 더 신나게 흔들어줘"
-            disabled={isGenerating}
-            style={{
-              width: '100%',
-              minHeight: 80,
-              fontFamily: 'inherit',
-              fontSize: 15,
-              fontWeight: 600,
-              padding: 12,
-              border: border.brutal,
-              borderRadius: radius.sm,
-              background: palette.bg,
-              boxShadow: shadow.brutalSm,
-              resize: 'vertical',
-            }}
-          />
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
-            <button
-              onClick={onGenerate}
-              disabled={isGenerating || input.trim().length === 0}
-              style={{
-                ...btn(palette.primary, '#fff'),
-                opacity: (isGenerating || input.trim().length === 0) ? 0.5 : 1,
-              }}
-            >
-              {isGenerating ? '생각 중…' : '🪄 보내기'}
-            </button>
-            <span style={{ fontSize: 11, color: palette.textMuted }}>또는 예시 누르기:</span>
-            {SAMPLE_PROMPTS.map((p) => (
-              <button
-                key={p}
-                onClick={() => setInput(p)}
-                disabled={isGenerating}
-                style={{
-                  fontFamily: 'inherit', fontSize: 11,
-                  background: palette.tileBlue, border: border.brutal, borderRadius: radius.sm,
-                  padding: '4px 8px', cursor: 'pointer',
-                }}
-              >{p}</button>
-            ))}
-          </div>
-        </section>
-
-        {/* AI 응답 영역 */}
-        {(isGenerating || streamedText || program || genError) && (
-          <section style={card}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>🪄 AI 짝코더 응답</div>
+        {/* AI 응답 미리보기 */}
+        {(program || genError || isGenerating) && (
+          <section style={cardStyle}>
             {genError ? (
-              <div style={{ background: '#FFE6E6', border: border.brutal, borderRadius: radius.sm, padding: 12, fontSize: 13 }}>
-                <strong style={{ color: palette.primary }}>오류:</strong>
-                <pre style={{ whiteSpace: 'pre-wrap', marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
-                  {genError}
-                </pre>
-              </div>
+              <div style={{ color: C.err, fontSize: 13 }}>오류: {genError}</div>
             ) : program ? (
               <div>
                 {program.intro && (
-                  <div style={{ background: palette.tileBlue, border: border.brutal, borderRadius: radius.sm, padding: 12, marginBottom: 10 }}>
-                    💭 {program.intro}
+                  <div style={{ background: C.primaryLight, padding: 12, borderRadius: 8, marginBottom: 10, fontSize: 14 }}>
+                    💭 {stripAudioTags(program.intro)}
                   </div>
                 )}
                 {program.steps.length === 0 && (
-                  <div style={{ fontSize: 13, color: palette.textMuted, fontStyle: 'italic', marginBottom: 10 }}>
-                    (코드 없이 짝코더가 먼저 물어봤어요. 아래 칩을 누르거나 답해주세요.)
+                  <div style={{ fontSize: 13, color: C.textMuted, fontStyle: 'italic', marginBottom: 10 }}>
+                    (친구가 먼저 물어봤어요 ↓)
                   </div>
                 )}
-                <ol style={{ paddingLeft: 0, listStyle: 'none', margin: 0 }}>
-                  {program.steps.map((step, i) => {
-                    const active = currentStepIndex === i;
-                    return (
-                      <li
-                        key={i}
-                        style={{
-                          padding: '8px 12px',
-                          marginBottom: 6,
-                          borderRadius: radius.sm,
-                          border: border.brutal,
-                          background: active ? palette.secondary : (i % 2 ? palette.bg : palette.panel),
-                          fontWeight: active ? 900 : 600,
-                          display: 'flex', flexDirection: 'column', gap: 2,
-                        }}
-                      >
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <span style={{ fontSize: 18 }}>{stepIcon[step.do]}</span>
-                          <span style={{ fontSize: 12, color: palette.textMuted, minWidth: 22 }}>#{i + 1}</span>
-                          <span style={{ fontSize: 13 }}>{describeStep(step)}</span>
-                        </div>
-                        {step.hint && (
-                          <div style={{
-                            fontSize: 12,
-                            color: palette.textMuted,
-                            paddingLeft: 36,
-                            fontWeight: 500,
-                            fontStyle: 'italic',
-                          }}>
-                            💡 {step.hint}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ol>
-                {program.learning_points && program.learning_points.length > 0 && (
-                  <div style={{
-                    marginTop: 12,
-                    background: palette.tileMint,
-                    border: border.brutal,
-                    borderRadius: radius.sm,
-                    padding: 12,
-                    boxShadow: shadow.brutalSm,
-                  }}>
-                    <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 6 }}>💡 오늘 배운 것</div>
-                    <ul style={{ paddingLeft: 18, margin: 0 }}>
-                      {program.learning_points.map((lp, i) => (
-                        <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{lp}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                {/* steps 자체는 학생용 페이지에선 코딩 카드 안 보여줌 — 직접 ▶ 실행만 */}
                 {program.questions && program.questions.length > 0 && (
-                  <div style={{
-                    marginTop: 12,
-                    background: palette.tilePink,
-                    border: border.brutal,
-                    borderRadius: radius.sm,
-                    padding: 12,
-                    boxShadow: shadow.brutalSm,
-                  }}>
-                    <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 6 }}>🤔 짝코더가 물어봐요</div>
-                    <ul style={{ paddingLeft: 18, margin: 0 }}>
-                      {program.questions.map((q, i) => (
-                        <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{q}</li>
-                      ))}
-                    </ul>
+                  <div style={{ background: '#FFF3E0', border: `1px solid ${C.accent}`, borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                    {program.questions.map((q, i) => (
+                      <div key={i} style={{ fontSize: 14, marginBottom: 4 }}>🤔 {q}</div>
+                    ))}
                   </div>
                 )}
                 {program.variation_chips && program.variation_chips.length > 0 && (
-                  <div style={{ marginTop: 12 }}>
-                    <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 6, fontWeight: 700 }}>
-                      ✨ 다음에 해볼까? (눌러서 보내기)
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                      {program.variation_chips.map((chip, i) => (
-                        <button
-                          key={i}
-                          onClick={() => sendPrompt(chip)}
-                          disabled={isGenerating}
-                          style={{
-                            fontFamily: 'inherit', fontWeight: 800, fontSize: 13,
-                            background: palette.secondary,
-                            border: border.brutal, borderRadius: 999,
-                            padding: '6px 14px', cursor: 'pointer',
-                            boxShadow: shadow.brutalSm,
-                          }}
-                        >{chip}</button>
-                      ))}
-                    </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+                    {program.variation_chips.map((c, i) => (
+                      <button key={i} onClick={() => sendPrompt(c)} disabled={isGenerating}
+                        style={{ ...chipBtn, background: C.accent, color: '#fff', borderColor: C.accent }}>
+                        {c}
+                      </button>
+                    ))}
                   </div>
                 )}
                 {program.steps.length > 0 && (
-                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
                     {!isExecuting ? (
-                      <button onClick={onExecute} disabled={!isConnected} style={btn(palette.tertiary, '#fff')}>
-                        ▶ 실행
+                      <button onClick={onExecute} disabled={!isConnected}
+                        style={{ ...primaryBtn, fontSize: 16, padding: '12px 20px' }}>
+                        ▶ 작동시키기
                       </button>
                     ) : (
-                      <button onClick={onStopExecution} style={btn(palette.primary, '#fff')}>⏹ 정지</button>
+                      <button onClick={onStopExecution} style={{ ...primaryBtn, background: C.err }}>
+                        ⏹ 정지
+                      </button>
                     )}
-                    {!isConnected && (
-                      <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
-                        (보드를 연결하면 실행 가능)
-                      </span>
-                    )}
+                    {!isConnected && <span style={{ alignSelf: 'center', fontSize: 12, color: C.textMuted }}>(보드 연결 필요)</span>}
                   </div>
                 )}
               </div>
             ) : (
-              <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: palette.textMuted, whiteSpace: 'pre-wrap' }}>
-                {streamedText || '...'}
-              </div>
+              <div style={{ fontSize: 13, color: C.textMuted }}>친구가 생각 중...</div>
             )}
           </section>
         )}
 
-        {/* 메시지 풍선 */}
+        {/* say 메시지 풍선 */}
         {sayMessages.length > 0 && (
-          <section style={card}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>💬 짝코더 메시지</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {sayMessages.map((m, i) => (
-                <div key={i} style={{ background: palette.accent, border: border.brutal, borderRadius: radius.sm, padding: '8px 12px', fontSize: 13 }}>
-                  {m.text}
-                </div>
-              ))}
-            </div>
+          <section style={cardStyle}>
+            {sayMessages.map((m, i) => (
+              <div key={i} style={{
+                background: '#E1F5FE', border: `1px solid ${C.primaryLight}`,
+                padding: 10, borderRadius: 12, fontSize: 14, marginBottom: 6,
+              }}>
+                {m.text}
+              </div>
+            ))}
           </section>
         )}
 
-        {/* 모터 캘리브 + 거리센서 */}
-        <section style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-          <div style={card}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>🔧 내 모터 길들이기</div>
-            <div style={{ fontSize: 11, color: palette.textMuted, marginBottom: 10 }}>
-              ▶ 시동 눌러보고, 안 돌면 + 로 한 칸씩 올려보세요.
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-              {MOTOR_IDS.map((id) => {
-                const dir = cal.current.dirOverride[id];
-                const v = cal.current.startThreshold[id];
-                return (
-                  <div key={id} style={{
-                    ...card,
-                    background: dir === 1 ? palette.accent : palette.tilePink,
-                    padding: 10, gap: 6,
-                    display: 'flex', flexDirection: 'column',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                      <span style={{ fontWeight: 900, fontSize: 14 }}>{id}</span>
-                      <button
-                        onClick={() => onToggleDir(id)}
-                        style={{
-                          fontFamily: 'inherit', fontWeight: 700, fontSize: 10,
-                          background: palette.panel, border: border.brutal, borderRadius: radius.sm,
-                          padding: '2px 5px', cursor: 'pointer',
-                        }}
-                      >{dir === 1 ? '정' : '역'}</button>
-                    </div>
-                    <div style={{ textAlign: 'center', fontSize: 10, color: palette.textMuted, marginTop: 2 }}>시동</div>
-                    <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 22, lineHeight: 1 }}>V{v}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
-                      <button onClick={() => onAdjustThreshold(id, -1)} disabled={v <= 0}
-                        style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: palette.panel, border: border.brutal, borderRadius: radius.sm, padding: '3px 0', cursor: 'pointer', opacity: v <= 0 ? 0.4 : 1 }}>−</button>
-                      <button onClick={() => onAdjustThreshold(id, +1)} disabled={v >= 9}
-                        style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: palette.panel, border: border.brutal, borderRadius: radius.sm, padding: '3px 0', cursor: 'pointer', opacity: v >= 9 ? 0.4 : 1 }}>+</button>
-                    </div>
-                    <button onClick={() => onTestStart(id)} disabled={!isConnected || isExecuting}
-                      style={{ fontFamily: 'inherit', fontWeight: 800, fontSize: 11, background: palette.tertiary, color: '#fff', border: border.brutal, borderRadius: radius.sm, padding: '5px 0', cursor: 'pointer', opacity: (!isConnected || isExecuting) ? 0.5 : 1 }}>
-                      ▶ 시동
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+        {/* 수동 조종 — 좌(조이스틱) | 중(속도) | 우(서보×2) */}
+        <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
+          <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.textMuted }}>🕹️ 조종</div>
+            <Joystick onDirection={(dir) => {
+              const map: Record<string, string> = { up: 'W', down: 'S', left: 'A', right: 'D', stop: '0' };
+              void sendByte(map[dir] ?? '0');
+            }} disabled={!isConnected} colors={C} />
           </div>
 
-          <div style={card}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>👀 거리센서</div>
-            <div style={{ fontSize: 11, color: palette.textMuted, marginBottom: 10 }}>
-              앞에 있는 물체와의 거리
-            </div>
-            <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <div style={{ fontWeight: 900, fontSize: 56, lineHeight: 1, color: distanceReactivity ? palette.tertiary : palette.textMuted }}>
-                {board.lastDistanceCm ?? '—'}
-              </div>
-              <div style={{ fontSize: 13, color: palette.textMuted, marginTop: 4 }}>cm</div>
-            </div>
-            <div style={{
-              height: 8, borderRadius: 4, background: palette.bg, border: border.brutal, overflow: 'hidden',
-            }}>
-              <div style={{
-                height: '100%',
-                width: `${Math.min(100, ((board.lastDistanceCm ?? 0) / 75) * 100)}%`,
-                background: palette.tertiary,
-                transition: `width ${m.fast}`,
-              }} />
-            </div>
-            {!distanceReactivity && (
-              <div style={{ fontSize: 10, color: palette.textMuted, marginTop: 8, textAlign: 'center' }}>
-                거리 반응 모드를 켜면 AI가 거리에 반응하는 코드를 만들어요.
-              </div>
-            )}
+          <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.textMuted }}>⚡ 속도</div>
+            <SpeedGauge onSpeedChange={(v) => void sendByte(`V${v}`)} disabled={!isConnected} colors={C} />
+          </div>
+
+          <div style={{ ...cardStyle, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.textMuted, textAlign: 'center' }}>🎚 서보</div>
+            <ServoGauge label="A (입)" onUp={() => void sendByte('%')} onDown={() => void sendByte('5')} disabled={!isConnected} colors={C} />
+            <ServoGauge label="B (꼬리)" onUp={() => void sendByte('6')} onDown={() => void sendByte('^')} disabled={!isConnected} colors={C} />
           </div>
         </section>
 
@@ -649,16 +447,26 @@ export default function PlayPage() {
   );
 }
 
-function btn(bg: string, fg: string): React.CSSProperties {
-  return {
-    fontFamily: 'inherit',
-    fontWeight: 800,
-    border: border.brutal,
-    borderRadius: radius.sm,
-    background: bg,
-    color: fg,
-    padding: '8px 14px',
-    cursor: 'pointer',
-    boxShadow: shadow.brutalSm,
-  };
-}
+const primaryBtn: React.CSSProperties = {
+  fontFamily: 'inherit', fontWeight: 700, fontSize: 14,
+  background: '#fff', color: C.primary,
+  border: 'none', borderRadius: 8,
+  padding: '8px 14px', cursor: 'pointer',
+};
+
+const iconBtn: React.CSSProperties = {
+  fontFamily: 'inherit', fontSize: 16,
+  background: 'rgba(255,255,255,0.2)', color: '#fff',
+  border: 'none', borderRadius: 999,
+  width: 36, height: 36, cursor: 'pointer',
+};
+
+const chipBtn: React.CSSProperties = {
+  fontFamily: 'inherit', fontWeight: 600, fontSize: 12,
+  background: '#fff', color: C.text,
+  border: `1px solid ${C.border}`, borderRadius: 999,
+  padding: '6px 12px', cursor: 'pointer',
+};
+
+// stepIcon, describeStep 은 학생용에선 사용 안 함 (코딩 카드 표시 안 함).
+// 디버그 보드 (/play/test) 에서만 사용.
