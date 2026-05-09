@@ -12,7 +12,7 @@ import { CameraPanel } from '@/components/play/CameraPanel';
 import { isV13Plus } from '@/lib/commands/commands';
 import { skillsForArtwork, type Skill } from '@/lib/skills/library';
 import { useCustomSkillsStore, type CustomSkill } from '@/lib/skills/customStore';
-import { useGestureMappingStore, ACTIONS, actionById, type GestureKey, type ActionId } from '@/lib/gestures/mappingStore';
+import { useGestureMappingStore, ACTIONS, actionById, fingerCountToKey, GESTURE_LABELS, type GestureKey, type ActionId } from '@/lib/gestures/mappingStore';
 import { useBoardStore } from '@/lib/serial/webSerial';
 import { useCalibrationStore } from '@/lib/calibration/store';
 import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
@@ -181,6 +181,7 @@ export default function PlayPage() {
   const [showTrace, setShowTrace] = useState(false);   // 실행 과정 펼침 여부
   const [showJoystick, setShowJoystick] = useState(false);   // 직접 조종 카드 표시 (작품 무관 토글)
   const [showCamera, setShowCamera] = useState(false);   // 카메라 동작 인식 토글
+  const [showMappingAdvanced, setShowMappingAdvanced] = useState(false);   // 고급 매핑 펼침
   // 카메라 제스처 → 보드 명령 매핑 (마지막 명령 sig 비교로 시리얼 포화 방지)
   const lastGestureSigRef = useRef<string>('');
   const [gestureStatus, setGestureStatus] = useState<string>('');   // 화면 진단
@@ -649,40 +650,35 @@ export default function PlayPage() {
   // 🖐 카메라 제스처 → 보드 명령. 학생이 매핑 store 에서 정한 동작 송신.
   // openness >= 0.65 = 활짝(hand_open), <= 0.3 = 주먹(hand_fist), 사이는 무시 (전이 영역).
   // sig 비교로 같은 명령 반복 송신 방지.
-  const onCameraGesture = useCallback((g: { type: 'hand_open' | 'head_tilt'; openness?: number; dx?: number }) => {
-    if (g.type !== 'hand_open' || g.openness === undefined || !Number.isFinite(g.openness)) {
-      setGestureStatus('🙅 손 인식 실패 — 카메라 앞에서 손을 또렷하게 보여주세요');
+  const onCameraGesture = useCallback((g: { type: 'hand' | 'head_tilt'; openness?: number; fingerCount?: number; dx?: number }) => {
+    if (g.type !== 'hand' || g.fingerCount === undefined || !Number.isFinite(g.fingerCount)) {
+      setGestureStatus('🙅 손 인식 안 됨 — 카메라에 손 또렷이 보여주세요');
       return;
     }
-    const o = g.openness;
+    const fc = g.fingerCount;
+    const key = fingerCountToKey(fc);
     const b = useBoardStore.getState();
+    const meta = key ? GESTURE_LABELS[key] : null;
+    const head = meta ? `${meta.emoji} ${meta.label}` : `손가락 ${fc}개`;
 
-    // 손 모양 분류 — 실측 openness 가 0.4~0.6 범위가 흔해 임계값 낮춤
-    let key: GestureKey | null = null;
-    if (o >= 0.55) key = 'hand_open';
-    else if (o <= 0.30) key = 'hand_fist';
-
-    // 진단: 항상 화면에 현재 손 상태 표시
-    const keyLabel = key === 'hand_open' ? '🤚 활짝' : key === 'hand_fist' ? '✊ 주먹' : '🖐 중간';
     if (b.status !== 'connected') {
-      setGestureStatus(`${keyLabel} (${(o * 100).toFixed(0)}%) — 보드 미연결`);
+      setGestureStatus(`${head} — 보드 미연결`);
       return;
     }
-
     if (!key) {
-      setGestureStatus(`${keyLabel} (${(o * 100).toFixed(0)}%)`);
+      setGestureStatus(head);
       return;
     }
 
     if (lastGestureSigRef.current === key) {
-      setGestureStatus(`${keyLabel} (${(o * 100).toFixed(0)}%) · 유지`);
+      setGestureStatus(`${head} · 유지`);
       return;
     }
     lastGestureSigRef.current = key;
 
     const mapping = useGestureMappingStore.getState().mapping;
     const action = actionById(mapping[key]);
-    setGestureStatus(`${keyLabel} (${(o * 100).toFixed(0)}%) → ${action.emoji} ${action.label} [${action.bytes || '∅'}]`);
+    setGestureStatus(`${head} → ${action.emoji} ${action.label}`);
     console.log('[gesture]', key, '→', action.id, action.bytes);
     if (!action.bytes) return;
     void b.send(action.bytes);
@@ -1032,51 +1028,77 @@ export default function PlayPage() {
               />
             </div>
             <div style={{ flex: 1, minWidth: 240, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ fontSize: 14, fontWeight: 800 }}>🖐 손 동작 매핑</div>
-              <div style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.4 }}>
-                내 손 모양에 어떤 동작을 시킬지 직접 골라!
-              </div>
+              <div style={{ fontSize: 14, fontWeight: 800 }}>🖐 손가락 개수로 조종</div>
 
-              {/* 실시간 진단 — openness 값 + 매핑된 동작 */}
+              {/* 실시간 진단 — 손가락 N개 + 매핑된 동작 */}
               <div style={{
-                fontSize: 13, fontWeight: 800,
+                fontSize: 14, fontWeight: 800,
                 background: gestureStatus.includes('보드 미연결') ? '#FFE6E6' : palette.tileBlue,
                 border: border.brutal, borderRadius: radius.sm,
-                padding: '8px 10px',
-                minHeight: 36,
+                padding: '10px 12px',
+                minHeight: 44,
               }}>
                 {gestureStatus || '🖐 손을 카메라에 비춰주세요'}
               </div>
 
-              <GestureMapRow
-                emoji="🤚"
-                label="손 활짝"
-                gesture="hand_open"
-                value={gestureMapping.mapping.hand_open}
-                onChange={(v) => gestureMapping.setMapping('hand_open', v)}
-                colors={palette}
-              />
-              <GestureMapRow
-                emoji="✊"
-                label="주먹"
-                gesture="hand_fist"
-                value={gestureMapping.mapping.hand_fist}
-                onChange={(v) => gestureMapping.setMapping('hand_fist', v)}
-                colors={palette}
-              />
+              {/* 기본 매핑 미리보기 — 항상 보임 (학생이 어떤 손가락 → 어떤 동작인지 즉시 인지) */}
+              <div style={{ fontSize: 12, color: palette.textMuted, fontWeight: 700 }}>기본 동작</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
+                {(['finger_0', 'finger_1', 'finger_2', 'finger_3', 'finger_4', 'finger_5'] as const).map((k) => {
+                  const action = actionById(gestureMapping.mapping[k]);
+                  const meta = GESTURE_LABELS[k];
+                  return (
+                    <div key={k} style={{
+                      display: 'flex', alignItems: 'center', gap: 4,
+                      fontSize: 11, padding: '3px 6px',
+                      background: palette.bg, borderRadius: 4,
+                    }}>
+                      <span>{meta.emoji}</span>
+                      <span style={{ color: palette.textMuted }}>→</span>
+                      <span style={{ fontWeight: 700 }}>{action.emoji} {action.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
 
+              {/* 고급 매핑 — 기본 접힘. 클릭 시 펼침 */}
               <button
-                onClick={() => gestureMapping.reset()}
+                onClick={() => setShowMappingAdvanced((v) => !v)}
                 style={{
                   alignSelf: 'flex-start', fontSize: 11, color: palette.textMuted,
                   background: 'transparent', border: 'none', cursor: 'pointer',
-                  textDecoration: 'underline', padding: 0,
+                  textDecoration: 'underline', padding: 0, marginTop: 4,
                 }}
               >
-                기본 매핑으로
+                {showMappingAdvanced ? '▲ 매핑 닫기' : '⚙️ 고급 — 매핑 바꾸기'}
               </button>
+              {showMappingAdvanced && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
+                  {(['finger_0', 'finger_1', 'finger_2', 'finger_3', 'finger_4', 'finger_5'] as const).map((k) => (
+                    <GestureMapRow
+                      key={k}
+                      emoji={GESTURE_LABELS[k].emoji}
+                      label={GESTURE_LABELS[k].label}
+                      gesture={k}
+                      value={gestureMapping.mapping[k]}
+                      onChange={(v) => gestureMapping.setMapping(k, v)}
+                      colors={palette}
+                    />
+                  ))}
+                  <button
+                    onClick={() => gestureMapping.reset()}
+                    style={{
+                      alignSelf: 'flex-start', fontSize: 11, color: palette.textMuted,
+                      background: 'transparent', border: 'none', cursor: 'pointer',
+                      textDecoration: 'underline', padding: 0,
+                    }}
+                  >
+                    기본으로 되돌리기
+                  </button>
+                </div>
+              )}
               <div style={{ fontSize: 10, color: palette.textMuted, marginTop: 4 }}>
-                ※ 처음엔 모델 다운로드 살짝 느려요. 이후 즉각 반응.
+                ※ 처음엔 모델 다운로드 살짝 느려요.
               </div>
             </div>
           </section>

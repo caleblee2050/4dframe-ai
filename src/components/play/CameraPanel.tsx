@@ -9,8 +9,8 @@
 import { useEffect, useRef, useState } from 'react';
 
 type Gesture =
-  | { type: 'hand_open'; openness: number }   // 0(주먹) ~ 1(완전 펼침)
-  | { type: 'head_tilt'; dx: number };         // -1(왼) ~ +1(오른)
+  | { type: 'hand'; openness: number; fingerCount: number }   // openness 0~1, fingerCount 0~5
+  | { type: 'head_tilt'; dx: number };                         // -1(왼) ~ +1(오른)
 
 interface Props {
   onGesture: (g: Gesture) => void;
@@ -113,12 +113,13 @@ export function CameraPanel({ onGesture, colors }: Props) {
         const lm = result.landmarks?.[0];
         if (lm && lm.length >= 21 && mode === 'hand') {
           const openness = computeHandOpenness(lm);
+          const fingerCount = countFingers(lm);
           drawHand(canvasRef.current, lm);
           // 200ms throttle
           if (ts - lastSendAt > 200) {
             lastSendAt = ts;
-            onGesture({ type: 'hand_open', openness });
-            setStatus(`손 펼침: ${(openness * 100).toFixed(0)}%`);
+            onGesture({ type: 'hand', openness, fingerCount });
+            setStatus(`손가락 ${fingerCount}개 · 펼침 ${(openness * 100).toFixed(0)}%`);
           }
         } else if (mode === 'head') {
           // 단순 모드 — 카메라 픽셀 색 분석으로 머리 위치 추정 (간이). MediaPipe FaceLandmarker 도입은 v0.1
@@ -192,6 +193,38 @@ function computeHandOpenness(landmarks: Lm[]): number {
   if (!Number.isFinite(avg)) return 0;
   // normalize: 보통 주먹 ~ 0.1, 펼친 손 ~ 0.35. clamp 후 0~1.
   return Math.max(0, Math.min(1, (avg - 0.1) / 0.25));
+}
+
+// 펴진 손가락 개수 (0~5).
+// 4 손가락 (검지/중지/약지/새끼) + 엄지 별도 처리.
+// 판정: tip 의 mcp 거리 > pip 의 mcp 거리 ×1.3 면 펴짐 (관절 각도 대용).
+function isExtended(lm: Lm[], tip: number, pip: number, mcp: number): boolean {
+  const t = lm[tip], p = lm[pip], m = lm[mcp];
+  if (!t || !p || !m) return false;
+  const tipDist = Math.hypot(t.x - m.x, t.y - m.y);
+  const pipDist = Math.hypot(p.x - m.x, p.y - m.y);
+  return tipDist > pipDist * 1.3;
+}
+
+function countFingers(lm: Lm[]): number {
+  if (!lm || lm.length < 21) return 0;
+  let n = 0;
+  // index 5(mcp), 6(pip), 8(tip)
+  if (isExtended(lm, 8, 6, 5)) n++;
+  // middle 9, 10, 12
+  if (isExtended(lm, 12, 10, 9)) n++;
+  // ring 13, 14, 16
+  if (isExtended(lm, 16, 14, 13)) n++;
+  // pinky 17, 18, 20
+  if (isExtended(lm, 20, 18, 17)) n++;
+  // thumb 2, 3, 4 — 측면이라 상대적 검사. tip(4) 이 wrist(0) 에서 멀고 ip(3) 보다 더 멀면 펴짐.
+  const t = lm[4], i = lm[3], w = lm[0];
+  if (t && i && w) {
+    const tw = Math.hypot(t.x - w.x, t.y - w.y);
+    const iw = Math.hypot(i.x - w.x, i.y - w.y);
+    if (tw > iw * 1.1) n++;
+  }
+  return n;
 }
 
 function drawHand(canvas: HTMLCanvasElement | null, landmarks: Lm[]) {
