@@ -273,7 +273,26 @@ export default function PlayTestPage() {
     }));
   };
 
+  // V 단계별 PWM 비교 시퀀스 — 한 모터를 V3 → V5 → V7 → V9 차례로 1초씩 돌림.
+  // PWM 차이가 시각적으로 명확히 보이는지 검증.
+  const onVSweep = async (motor: MotorId) => {
+    if (board.status !== 'connected') return;
+    const cfg = MOTORS[motor];
+    const levels = [3, 5, 7, 9];
+    for (const v of levels) {
+      // 글로벌 V 명령 — 펌웨어 v1.3+ 만 처리
+      await board.send(`V${v}`);
+      await new Promise((r) => setTimeout(r, 50));
+      await board.send(cfg.forwardByte);
+      await new Promise((r) => setTimeout(r, 1000));
+      await board.send(GLOBAL.stopAll);
+      await new Promise((r) => setTimeout(r, 500));   // 다음 단계 전 휴식
+    }
+  };
+
   const isConnected = board.status === 'connected';
+  const fwVersion = board.lastBoot?.fw;
+  const isFw132Plus = fwVersion === '1.3.2' || (fwVersion && fwVersion.match(/^1\.3\.[2-9]/) !== null);
 
   return (
     <main
@@ -298,9 +317,26 @@ export default function PlayTestPage() {
           <div style={{ flex: 1 }}>
             <h1 style={{ fontSize: 22, fontWeight: 900, margin: 0 }}>Play Test — 보드 연결 + DSL 검증</h1>
             <div style={{ fontSize: 13, color: palette.textMuted, marginTop: 4 }}>
-              펌웨어 v1.3 / Web Serial — Chrome 또는 Edge 에서만 동작합니다.
+              Web Serial — Chrome 또는 Edge 에서만 동작합니다.
             </div>
           </div>
+          {/* 펌웨어 버전 — 큰 뱃지 형태로 명확히 */}
+          {isConnected && (
+            <div style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+              background: isFw132Plus ? '#D1F5D3' : '#FFE5B4',
+              border: border.brutal, borderRadius: radius.sm,
+              padding: '8px 16px', minWidth: 110,
+            }}>
+              <div style={{ fontSize: 10, color: palette.textMuted, fontWeight: 700 }}>FW</div>
+              <div style={{ fontSize: 22, fontWeight: 900, lineHeight: 1, color: isFw132Plus ? '#1F8A2C' : '#B8651F' }}>
+                {fwVersion ?? '?.?'}
+              </div>
+              <div style={{ fontSize: 9, color: palette.textMuted, marginTop: 2 }}>
+                {isFw132Plus ? '✓ 최신' : '⚠ 구버전'}
+              </div>
+            </div>
+          )}
           {!isConnected ? (
             <button
               onClick={() => board.connect()}
@@ -605,6 +641,41 @@ export default function PlayTestPage() {
                 </button>
               );
             })}
+          </div>
+        </section>
+
+        {/* V Sweep — V 단계별 PWM 차이 자동 비교 (펌웨어 v1.3.2+ 만 의미 있음) */}
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>📈 V 단계별 속도 비교</h2>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 8 }}>
+            한 모터를 <strong>V3 → V5 → V7 → V9</strong> 차례로 1초씩 돌립니다.
+            점점 빨라지면 ✅ PWM 정상. 동일 속도면 ❌ 펌웨어 회귀 또는 펌웨어 미적용.
+            {!isFw132Plus && isConnected && (
+              <div style={{ color: palette.primary, marginTop: 4, fontWeight: 700 }}>
+                ⚠ 현재 펌웨어 {fwVersion ?? '미감지'} — V 명령 미지원. 보드를 v1.3.2 로 플래시 필요.
+              </div>
+            )}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+            {MOTOR_IDS.map((id) => (
+              <button
+                key={id}
+                onClick={() => onVSweep(id)}
+                disabled={!isConnected || running !== null}
+                style={{
+                  ...buttonBase,
+                  background: '#E1F5FE',
+                  flexDirection: 'column',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  opacity: (!isConnected || running !== null) ? 0.5 : 1,
+                }}
+              >
+                <div style={{ fontWeight: 900, fontSize: 14 }}>{id} V Sweep</div>
+                <div style={{ fontSize: 10, color: palette.textMuted }}>4초 (V3→V5→V7→V9)</div>
+              </button>
+            ))}
           </div>
         </section>
 
