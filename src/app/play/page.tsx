@@ -132,6 +132,7 @@ export default function PlayPage() {
   const [currentStepIndex, setCurrentStepIndex] = useState<number | null>(null);
   const [sayMessages, setSayMessages] = useState<Array<{ text: string; ts: number }>>([]);
   const [showTrace, setShowTrace] = useState(false);   // 실행 과정 펼침 여부
+  const [showJoystick, setShowJoystick] = useState(false);   // 직접 조종 카드 표시 (작품 무관 토글)
   const abortRef = useRef<AbortController | null>(null);
 
   const isConnected = board.status === 'connected';
@@ -290,19 +291,21 @@ export default function PlayPage() {
     setTimeout(() => { void onExecute(); }, 50);
   };
 
-  // 🎤 음성 입력 — Web Speech API (Chrome/Edge 한국어). 유치원생도 그대로 말하면 텍스트로.
-  const recognitionRef = useRef<unknown>(null);
+  // 🎤 음성 입력 — Web Speech API (Chrome/Edge 한국어). 유치원생 친화.
+  // continuous=true + onend 자동 재시작 → ⏸ 누를 때까지 계속 듣기.
+  type SR = {
+    lang: string; continuous: boolean; interimResults: boolean;
+    onresult: (e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void;
+    onerror: (e: { error?: string }) => void;
+    onend: () => void;
+    start: () => void; stop: () => void;
+  };
+  const recognitionRef = useRef<SR | null>(null);
+  const stoppedByUserRef = useRef(false);
   const [listening, setListening] = useState(false);
 
   const onMicToggle = useCallback(() => {
     if (typeof window === 'undefined') return;
-    type SR = {
-      lang: string; continuous: boolean; interimResults: boolean;
-      onresult: (e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void;
-      onerror: (e: unknown) => void;
-      onend: () => void;
-      start: () => void; stop: () => void;
-    };
     const win = window as unknown as { SpeechRecognition?: new () => SR; webkitSpeechRecognition?: new () => SR };
     const SRClass = win.SpeechRecognition || win.webkitSpeechRecognition;
     if (!SRClass) {
@@ -310,12 +313,15 @@ export default function PlayPage() {
       return;
     }
     if (listening && recognitionRef.current) {
-      (recognitionRef.current as SR).stop();
+      stoppedByUserRef.current = true;
+      recognitionRef.current.stop();
       return;
     }
+
+    stoppedByUserRef.current = false;
     const recognition = new SRClass();
     recognition.lang = 'ko-KR';
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognitionRef.current = recognition;
 
@@ -329,8 +335,22 @@ export default function PlayPage() {
       }
       setInput(finalText + interim);
     };
-    recognition.onerror = (e) => { console.warn('[mic] error', e); setListening(false); };
-    recognition.onend = () => { setListening(false); recognitionRef.current = null; };
+    recognition.onerror = (e) => {
+      console.warn('[mic] error', e);
+      // 'no-speech' / 'aborted' 등은 침묵 timeout — onend 가 처리
+      if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+        alert('마이크 권한이 차단되어 있어요. 주소창 자물쇠 → 마이크 허용으로 바꿔주세요.');
+        stoppedByUserRef.current = true;
+      }
+    };
+    recognition.onend = () => {
+      // 명시적 stop 이 아니라면 자동 재시작 (브라우저 침묵 timeout 회피)
+      if (!stoppedByUserRef.current && recognitionRef.current === recognition) {
+        try { recognition.start(); return; } catch {}
+      }
+      setListening(false);
+      recognitionRef.current = null;
+    };
     recognition.start();
     setListening(true);
   }, [listening]);
@@ -564,10 +584,21 @@ export default function PlayPage() {
           >
             📷 사진으로 알려줄게
           </Link>
+          <button
+            onClick={() => setShowJoystick((v) => !v)}
+            title="조이스틱으로 직접 조종"
+            style={{
+              ...btn(showJoystick ? palette.tertiary : palette.tileBlue,
+                     showJoystick ? '#fff' : palette.textMain),
+              padding: '8px 12px', fontSize: 13,
+            }}
+          >
+            🕹 직접 조종 {showJoystick ? 'ON' : 'OFF'}
+          </button>
         </section>
 
-        {/* 🕹 직접 조종 — 자동차 작품 선택 시 노출 (차동 조향). */}
-        {(artwork === 'car_4wd') && (
+        {/* 🕹 직접 조종 — 토글 ON 시 또는 자동차 작품 시 노출 (차동 조향). */}
+        {(showJoystick || artwork === 'car_4wd') && (
           <section style={{ ...card, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
             <div>
               <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 4 }}>🕹 직접 조종</div>

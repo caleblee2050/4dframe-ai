@@ -81,19 +81,20 @@ const TUNES: Record<TuneId, Note[]> = {
     beats: 0.5,
   })),
 
-  // 🎵 오르골 — 반짝반짝 고음 + 태엽 풀어지는 dynamics (시작 빠름 → 점점 느려짐).
-  // beats 점진 증가 = 자연 감속. 마지막 음 길게 늘어짐. 발레리나 회전 속도와 sync 의도.
+  // 🎵 오르골 — 반짝반짝 멜로디 + 태엽 풀어지는 dynamics (시작 빠름 → 점점 느려짐).
+  // 옥타브 낮춤 (C4 ~ C5) — 더 부드럽고 친숙. triangle wave 가 자동 적용 (오르골 본질).
+  // beats 점진 증가 = 자연 감속. 마지막 음 길게.
   music_box: [
-    { hz: NOTE_HZ.C5, beats: 0.5 }, { hz: NOTE_HZ.C5, beats: 0.5 },
-    { hz: NOTE_HZ.G5, beats: 0.6 }, { hz: NOTE_HZ.G5, beats: 0.6 },
-    { hz: NOTE_HZ.A5, beats: 0.7 }, { hz: NOTE_HZ.A5, beats: 0.7 },
-    { hz: NOTE_HZ.G5, beats: 1.2 },
-    { hz: NOTE_HZ.F5, beats: 0.9 }, { hz: NOTE_HZ.F5, beats: 0.9 },
-    { hz: NOTE_HZ.E5, beats: 1.0 }, { hz: NOTE_HZ.E5, beats: 1.0 },
-    { hz: NOTE_HZ.D5, beats: 1.4 }, { hz: NOTE_HZ.D5, beats: 1.4 },
-    { hz: NOTE_HZ.C5, beats: 2.5 },   // 길게 늘어짐
+    { hz: NOTE_HZ.C4, beats: 0.5 }, { hz: NOTE_HZ.C4, beats: 0.5 },
+    { hz: NOTE_HZ.G4, beats: 0.6 }, { hz: NOTE_HZ.G4, beats: 0.6 },
+    { hz: NOTE_HZ.A4, beats: 0.7 }, { hz: NOTE_HZ.A4, beats: 0.7 },
+    { hz: NOTE_HZ.G4, beats: 1.2 },
+    { hz: NOTE_HZ.F4, beats: 0.9 }, { hz: NOTE_HZ.F4, beats: 0.9 },
+    { hz: NOTE_HZ.E4, beats: 1.0 }, { hz: NOTE_HZ.E4, beats: 1.0 },
+    { hz: NOTE_HZ.D4, beats: 1.4 }, { hz: NOTE_HZ.D4, beats: 1.4 },
+    { hz: NOTE_HZ.C4, beats: 2.5 },   // 길게 늘어짐
     { hz: null, beats: 0.5 },
-    { hz: NOTE_HZ.C5, beats: 4.0 },   // 잔잔한 마지막 한 음 (태엽 다 풀린 상태)
+    { hz: NOTE_HZ.C4, beats: 4.0 },   // 잔잔한 마지막 한 음 (태엽 다 풀린 상태)
   ],
 
   // 🦈 죠스 등장음 — E-F E-F 두 음 점점 빨라짐. 긴장감 점증.
@@ -140,6 +141,26 @@ export async function playMelody(tune: TuneId, tempo = 1.0, muted = false): Prom
   const notes = TUNES[tune];
   if (!notes) return;
 
+  // tune 별 음색.
+  //   music_box: triangle (부드러운 오르골 본질) + 긴 sustain (오르골 chime 느낌)
+  //   jaws: sine (저음 풍부, 위협 톤)
+  //   기본: square (8-bit 전자음)
+  let oscType: OscillatorType = 'square';
+  let peakGain = 0.15;
+  let attackSec = 0.01;
+  let releaseSec = 0.05;
+  if (tune === 'music_box') {
+    oscType = 'triangle';
+    peakGain = 0.22;          // 더 크게 (잘 들리도록)
+    attackSec = 0.02;
+    releaseSec = 0.18;        // 길게 ring out — 오르골 chime
+  } else if (tune === 'jaws') {
+    oscType = 'sine';
+    peakGain = 0.35;          // 저음은 잘 안 들리니 크게
+    attackSec = 0.03;
+    releaseSec = 0.12;
+  }
+
   const beatMs = BASE_BEAT_MS / tempo;
   let cursorMs = 0;
 
@@ -147,16 +168,16 @@ export async function playMelody(tune: TuneId, tempo = 1.0, muted = false): Prom
     if (note.hz !== null) {
       const startSec = ctx.currentTime + cursorMs / 1000;
       const durSec = (note.beats * beatMs) / 1000;
+      const safeRelease = Math.min(releaseSec, durSec * 0.4);
 
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'square';   // 8-bit 전자음 느낌
+      osc.type = oscType;
       osc.frequency.setValueAtTime(note.hz, startSec);
 
-      // 짧은 attack/decay envelope — 띠띠띠 느낌
       gain.gain.setValueAtTime(0, startSec);
-      gain.gain.linearRampToValueAtTime(0.15, startSec + 0.01);
-      gain.gain.setValueAtTime(0.15, startSec + durSec - 0.05);
+      gain.gain.linearRampToValueAtTime(peakGain, startSec + attackSec);
+      gain.gain.setValueAtTime(peakGain, startSec + durSec - safeRelease);
       gain.gain.linearRampToValueAtTime(0, startSec + durSec);
 
       osc.connect(gain).connect(ctx.destination);

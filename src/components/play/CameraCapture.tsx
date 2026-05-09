@@ -16,6 +16,8 @@ export function CameraCapture({ onCapture, onClose, colors }: Props) {
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  // 미러 — 전면 카메라(user) 인 경우만 좌우 반전. 후면(environment) 은 본 그대로.
+  const [mirror, setMirror] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,6 +36,12 @@ export function CameraCapture({ onCapture, onClose, colors }: Props) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play().catch(() => {});
         }
+        // facingMode 가 환경에 따라 user 일 수 있음 (PC 웹캠은 environment 미지원 → user fallback).
+        // user 면 좌우 반전 (자기 모습 보듯 직관적).
+        const track = stream.getVideoTracks()[0];
+        const settings = track?.getSettings();
+        const fm = settings?.facingMode;
+        setMirror(fm !== 'environment');   // user / 미정 / 모름 → 미러
         setReady(true);
       } catch (e) {
         const msg = e instanceof Error ? e.message : '카메라 접근 실패';
@@ -59,6 +67,11 @@ export function CameraCapture({ onCapture, onClose, colors }: Props) {
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+    if (mirror) {
+      // 미러 view 와 일치하게 캡쳐도 좌우 반전 (학생이 본 그대로)
+      ctx.translate(w, 0);
+      ctx.scale(-1, 1);
+    }
     ctx.drawImage(v, 0, 0, w, h);
     const dataURL = canvas.toDataURL('image/jpeg', 0.85);
     onCapture(dataURL);
@@ -76,7 +89,10 @@ export function CameraCapture({ onCapture, onClose, colors }: Props) {
           ref={videoRef}
           playsInline
           muted
-          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          style={{
+            width: '100%', height: '100%', objectFit: 'cover', display: 'block',
+            transform: mirror ? 'scaleX(-1)' : 'none',
+          }}
         />
         {error && (
           <div style={{
