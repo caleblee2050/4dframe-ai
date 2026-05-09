@@ -8,6 +8,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Joystick } from '@/components/play/Joystick';
 import { isV13Plus } from '@/lib/commands/commands';
+import { skillsForArtwork, type Skill } from '@/lib/skills/library';
 import { useBoardStore } from '@/lib/serial/webSerial';
 import { useCalibrationStore } from '@/lib/calibration/store';
 import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
@@ -253,6 +254,20 @@ export default function PlayPage() {
     cal.toggleDir(motor);
   };
 
+  // ▶ 스킬 실행 — AI 안 거치고 미리 정의된 DSL 즉시 실행.
+  const onRunSkill = (skill: Skill) => {
+    if (isExecuting) return;
+    if (!isConnected) {
+      alert('보드를 먼저 연결해주세요.');
+      return;
+    }
+    abortRef.current?.abort();
+    setProgram(skill.program);
+    setInput(`${skill.emoji} ${skill.label}`);
+    // 다음 tick 에 onExecute (program state 적용 후)
+    setTimeout(() => { void onExecute(); }, 50);
+  };
+
   // 🕹 직접 조종 — 차동 조향 (skid steering).
   // 좌/우 가상 모터 = 4WD 의 (M1+M3) / (M2+M4). 한 축 두 바퀴 자동차도 같은 매핑으로 직진/제자리회전.
   // PWM 개별 변조 (X{idx}{duty}) 는 v1.3+ 만 지원 → fw 자동 분기.
@@ -380,6 +395,29 @@ export default function PlayPage() {
                 </button>
               ))}
             </div>
+            {/* 스킬 칩 — 작품 선택 시 즉시 실행 가능한 standard 동작. AI 안 거침. */}
+            {skillsForArtwork(artwork).length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
+                  바로 실행 ▶
+                </span>
+                {skillsForArtwork(artwork).map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => onRunSkill(s)}
+                    disabled={!isConnected || isExecuting}
+                    title={s.description}
+                    style={{
+                      ...btn(palette.tilePink, palette.textMain),
+                      padding: '6px 10px', fontSize: 12,
+                      opacity: (!isConnected || isExecuting) ? 0.4 : 1,
+                    }}
+                  >
+                    {s.emoji} {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div style={{ flex: 1 }} />
           <label style={{

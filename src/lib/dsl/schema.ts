@@ -162,7 +162,7 @@ export type Step =
 export interface Program {
   schema_version: 1;
   // 학생이 선택한 작품 (commands.yaml artwork_aliases 키). 모터 알리아스 해석에 쓰임.
-  artwork?: 'viking' | 'car_4wd' | 'swing' | 'crocodile' | 'free';
+  artwork?: 'viking' | 'car_4wd' | 'swing' | 'crocodile' | 'ballerina' | 'free';
   // AI가 학생에게 거는 첫 한 문장. SayStep 도 사용 가능. 둘 다 옵셔널.
   intro?: string;
   // 코드. **0개도 허용** — AI 가 코드 안 만들고 질문만 할 때 사용 (대화형 세션).
