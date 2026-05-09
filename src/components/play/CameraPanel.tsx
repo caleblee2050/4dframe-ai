@@ -101,7 +101,7 @@ export function CameraPanel({ onGesture, colors }: Props) {
   const startDetectionLoop = () => {
     let lastSendAt = 0;
     const tick = () => {
-      const recognizer = recognizerRef.current as { detectForVideo: (v: HTMLVideoElement, ts: number) => { landmarks?: number[][][] } } | null;
+      const recognizer = recognizerRef.current as { detectForVideo: (v: HTMLVideoElement, ts: number) => { landmarks?: Lm[][] } } | null;
       const video = videoRef.current;
       if (!recognizer || !video || video.readyState < 2) {
         rafRef.current = requestAnimationFrame(tick);
@@ -172,21 +172,29 @@ export function CameraPanel({ onGesture, colors }: Props) {
   );
 }
 
+// MediaPipe Tasks Vision HandLandmarker 의 NormalizedLandmark 형태.
+// Hands(legacy) 는 number[][] 였지만 tasks-vision 은 객체 — 이전 array indexing 으로
+// 접근하면 undefined → NaN 발생. 이 버그가 모든 openness 계산을 NaN 으로 만들었음.
+type Lm = { x: number; y: number; z?: number };
+
 // 손 펼침 정도 (0~1) — 손가락 끝(8,12,16,20)과 손바닥 중앙(0)의 평균 거리.
-function computeHandOpenness(landmarks: number[][]): number {
-  const palm = landmarks[0];   // wrist
-  const tips = [8, 12, 16, 20].map((i) => landmarks[i]);
+function computeHandOpenness(landmarks: Lm[]): number {
+  const palm = landmarks[0];
+  if (!palm) return 0;
+  const tips = [8, 12, 16, 20].map((i) => landmarks[i]).filter(Boolean);
+  if (tips.length === 0) return 0;
   const distances = tips.map((t) => {
-    const dx = t[0] - palm[0];
-    const dy = t[1] - palm[1];
+    const dx = t.x - palm.x;
+    const dy = t.y - palm.y;
     return Math.sqrt(dx * dx + dy * dy);
   });
   const avg = distances.reduce((a, b) => a + b, 0) / distances.length;
+  if (!Number.isFinite(avg)) return 0;
   // normalize: 보통 주먹 ~ 0.1, 펼친 손 ~ 0.35. clamp 후 0~1.
   return Math.max(0, Math.min(1, (avg - 0.1) / 0.25));
 }
 
-function drawHand(canvas: HTMLCanvasElement | null, landmarks: number[][]) {
+function drawHand(canvas: HTMLCanvasElement | null, landmarks: Lm[]) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -194,8 +202,9 @@ function drawHand(canvas: HTMLCanvasElement | null, landmarks: number[][]) {
   ctx.fillStyle = '#03A9F4';
   ctx.strokeStyle = '#FFFFFF';
   for (const lm of landmarks) {
-    const x = lm[0] * canvas.width;
-    const y = lm[1] * canvas.height;
+    if (!lm) continue;
+    const x = lm.x * canvas.width;
+    const y = lm.y * canvas.height;
     ctx.beginPath();
     ctx.arc(x, y, 4, 0, Math.PI * 2);
     ctx.fill();

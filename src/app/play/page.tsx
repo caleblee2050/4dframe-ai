@@ -650,7 +650,10 @@ export default function PlayPage() {
   // openness >= 0.65 = 활짝(hand_open), <= 0.3 = 주먹(hand_fist), 사이는 무시 (전이 영역).
   // sig 비교로 같은 명령 반복 송신 방지.
   const onCameraGesture = useCallback((g: { type: 'hand_open' | 'head_tilt'; openness?: number; dx?: number }) => {
-    if (g.type !== 'hand_open' || g.openness === undefined) return;
+    if (g.type !== 'hand_open' || g.openness === undefined || !Number.isFinite(g.openness)) {
+      setGestureStatus('🙅 손 인식 실패 — 카메라 앞에서 손을 또렷하게 보여주세요');
+      return;
+    }
     const o = g.openness;
     const b = useBoardStore.getState();
 
