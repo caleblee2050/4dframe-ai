@@ -288,6 +288,54 @@ export default function PlayPage() {
     setTimeout(() => { void onExecute(); }, 50);
   };
 
+  // 🎤 음성 입력 — Web Speech API (Chrome/Edge 한국어). 유치원생도 그대로 말하면 텍스트로.
+  const recognitionRef = useRef<unknown>(null);
+  const [listening, setListening] = useState(false);
+
+  const onMicToggle = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    type SR = {
+      lang: string; continuous: boolean; interimResults: boolean;
+      onresult: (e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void;
+      onerror: (e: unknown) => void;
+      onend: () => void;
+      start: () => void; stop: () => void;
+    };
+    const win = window as unknown as { SpeechRecognition?: new () => SR; webkitSpeechRecognition?: new () => SR };
+    const SRClass = win.SpeechRecognition || win.webkitSpeechRecognition;
+    if (!SRClass) {
+      alert('이 브라우저는 음성 입력을 지원하지 않아요. 크롬을 써주세요!');
+      return;
+    }
+    if (listening && recognitionRef.current) {
+      (recognitionRef.current as SR).stop();
+      return;
+    }
+    const recognition = new SRClass();
+    recognition.lang = 'ko-KR';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognitionRef.current = recognition;
+
+    let finalText = '';
+    recognition.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        const t = r[0].transcript;
+        if (r.isFinal) finalText += t; else interim += t;
+      }
+      setInput(finalText + interim);
+    };
+    recognition.onerror = (e) => { console.warn('[mic] error', e); setListening(false); };
+    recognition.onend = () => { setListening(false); recognitionRef.current = null; };
+    recognition.start();
+    setListening(true);
+  }, [listening]);
+
+  // ⚙️ 설정 모달
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   // 📷 사진으로 작품 인식
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [identifying, setIdentifying] = useState(false);
@@ -430,6 +478,25 @@ export default function PlayPage() {
               내가 만든 작품을 말로 움직여 보세요.
             </div>
           </div>
+          {/* 거리센서 미니 위젯 — 보드 연결 시만 노출 */}
+          {isConnected && (
+            <div
+              title={distanceReactivity ? '거리 반응 모드 ON — AI 가 거리에 반응해요' : '거리 반응 모드 OFF (설정에서 켜기)'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                background: distanceReactivity ? palette.accent : palette.tilePink,
+                border: border.brutal, borderRadius: radius.sm,
+                padding: '6px 10px', boxShadow: shadow.brutalSm,
+                fontWeight: 800, fontSize: 13,
+              }}
+            >
+              <span>👀</span>
+              <span style={{ minWidth: 32, textAlign: 'right' }}>
+                {board.lastDistanceCm ?? '—'}
+              </span>
+              <span style={{ fontSize: 11, color: palette.textMuted }}>cm</span>
+            </div>
+          )}
           {!isConnected ? (
             <button
               onClick={() => board.connect()}
@@ -441,12 +508,24 @@ export default function PlayPage() {
             </button>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 12, color: palette.textMuted }}>
-                {board.lastBoot ? `${board.lastBoot.boardId} / FW${board.lastBoot.fw}` : 'connected'}
+              <span style={{ fontSize: 11, color: palette.textMuted }}>
+                {board.lastBoot ? `FW${board.lastBoot.fw}` : 'connected'}
               </span>
-              <button onClick={() => board.disconnect()} style={btn(palette.primary, '#fff')}>연결 끊기</button>
+              <button onClick={() => board.disconnect()} style={{ ...btn(palette.primary, '#fff'), padding: '6px 10px', fontSize: 12 }}>끊기</button>
             </div>
           )}
+          <button
+            onClick={() => setSettingsOpen(true)}
+            title="설정 (모터 길들이기 / 거리 반응)"
+            style={{
+              fontFamily: 'inherit', fontSize: 18,
+              width: 38, height: 38,
+              background: palette.panel, border: border.brutal, borderRadius: '50%',
+              cursor: 'pointer', boxShadow: shadow.brutalSm,
+            }}
+          >
+            ⚙️
+          </button>
         </header>
 
         {board.errorMessage && (
@@ -499,20 +578,6 @@ export default function PlayPage() {
             )}
           </div>
           <div style={{ flex: 1 }} />
-          <label style={{
-            display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-            background: distanceReactivity ? palette.accent : palette.tilePink,
-            border: border.brutal, borderRadius: radius.sm, padding: '8px 12px',
-            boxShadow: shadow.brutalSm,
-          }}>
-            <input
-              type="checkbox"
-              checked={distanceReactivity}
-              onChange={(e) => setDistanceReactivity(e.target.checked)}
-              style={{ width: 18, height: 18 }}
-            />
-            <span style={{ fontWeight: 800, fontSize: 13 }}>👀 거리 반응 모드</span>
-          </label>
           <button
             onClick={() => sound.toggleMute()}
             title={sound.muted ? '소리 켜기' : '소리 끄기'}
@@ -648,25 +713,59 @@ export default function PlayPage() {
               >🔄 새로 시작</button>
             )}
           </div>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="예: 바이킹을 더 신나게 흔들어줘"
-            disabled={isGenerating}
-            style={{
-              width: '100%',
-              minHeight: 80,
-              fontFamily: 'inherit',
-              fontSize: 15,
-              fontWeight: 600,
-              padding: 12,
-              border: border.brutal,
-              borderRadius: radius.sm,
-              background: palette.bg,
-              boxShadow: shadow.brutalSm,
-              resize: 'vertical',
-            }}
-          />
+          <div style={{ position: 'relative' }}>
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter = 실행. Shift+Enter = 줄바꿈.
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  if (!isGenerating && input.trim().length > 0) {
+                    void onGenerate();
+                  }
+                }
+              }}
+              placeholder={listening ? '듣고 있어요…' : '예: 악어가 앙 물게 해주세요  (엔터로 실행)'}
+              disabled={isGenerating}
+              style={{
+                width: '100%',
+                minHeight: 80,
+                fontFamily: 'inherit',
+                fontSize: 15,
+                fontWeight: 600,
+                padding: 12,
+                paddingRight: 56,   // 마이크 버튼 자리
+                border: border.brutal,
+                borderRadius: radius.sm,
+                background: listening ? '#FFE6E6' : palette.bg,
+                boxShadow: shadow.brutalSm,
+                resize: 'vertical',
+              }}
+            />
+            <button
+              onClick={onMicToggle}
+              disabled={isGenerating}
+              title={listening ? '듣기 멈춤' : '음성으로 말하기'}
+              style={{
+                position: 'absolute', top: 8, right: 8,
+                width: 40, height: 40, fontSize: 20,
+                background: listening ? palette.primary : palette.tileBlue,
+                color: listening ? '#fff' : palette.textMain,
+                border: border.brutal, borderRadius: '50%',
+                cursor: 'pointer', boxShadow: shadow.brutalSm,
+                animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none',
+              }}
+            >
+              {listening ? '⏸' : '🎤'}
+            </button>
+          </div>
+          <style jsx>{`
+            @keyframes pulse {
+              0%, 100% { transform: scale(1); }
+              50% { transform: scale(1.08); }
+            }
+          `}</style>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
             <button
               onClick={onGenerate}
@@ -676,7 +775,7 @@ export default function PlayPage() {
                 opacity: (isGenerating || input.trim().length === 0) ? 0.5 : 1,
               }}
             >
-              {isGenerating ? '생각 중…' : '🪄 보내기'}
+              {isGenerating ? '생각 중…' : '🪄 보내기 (엔터)'}
             </button>
             <span style={{ fontSize: 11, color: palette.textMuted }}>또는 예시 누르기:</span>
             {SAMPLE_PROMPTS.map((p) => (
@@ -849,83 +948,134 @@ export default function PlayPage() {
           </section>
         )}
 
-        {/* 모터 캘리브 + 거리센서 */}
-        <section style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
-          <div style={card}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>🔧 내 모터 길들이기</div>
-            <div style={{ fontSize: 11, color: palette.textMuted, marginBottom: 10 }}>
-              ▶ 시동 눌러보고, 안 돌면 + 로 한 칸씩 올려보세요.
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-              {MOTOR_IDS.map((id) => {
-                const dir = cal.current.dirOverride[id];
-                const v = cal.current.startThreshold[id];
-                return (
-                  <div key={id} style={{
-                    ...card,
-                    background: dir === 1 ? palette.accent : palette.tilePink,
-                    padding: 10, gap: 6,
-                    display: 'flex', flexDirection: 'column',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                      <span style={{ fontWeight: 900, fontSize: 14 }}>{id}</span>
-                      <button
-                        onClick={() => onToggleDir(id)}
-                        style={{
-                          fontFamily: 'inherit', fontWeight: 700, fontSize: 10,
-                          background: palette.panel, border: border.brutal, borderRadius: radius.sm,
-                          padding: '2px 5px', cursor: 'pointer',
-                        }}
-                      >{dir === 1 ? '정' : '역'}</button>
-                    </div>
-                    <div style={{ textAlign: 'center', fontSize: 10, color: palette.textMuted, marginTop: 2 }}>시동</div>
-                    <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 22, lineHeight: 1 }}>V{v}</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
-                      <button onClick={() => onAdjustThreshold(id, -1)} disabled={v <= 0}
-                        style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: palette.panel, border: border.brutal, borderRadius: radius.sm, padding: '3px 0', cursor: 'pointer', opacity: v <= 0 ? 0.4 : 1 }}>−</button>
-                      <button onClick={() => onAdjustThreshold(id, +1)} disabled={v >= 9}
-                        style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: palette.panel, border: border.brutal, borderRadius: radius.sm, padding: '3px 0', cursor: 'pointer', opacity: v >= 9 ? 0.4 : 1 }}>+</button>
-                    </div>
-                    <button onClick={() => onTestStart(id)} disabled={!isConnected || isExecuting}
-                      style={{ fontFamily: 'inherit', fontWeight: 800, fontSize: 11, background: palette.tertiary, color: '#fff', border: border.brutal, borderRadius: radius.sm, padding: '5px 0', cursor: 'pointer', opacity: (!isConnected || isExecuting) ? 0.5 : 1 }}>
-                      ▶ 시동
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+        {/* 모터 캘리브 + 거리 반응 = 설정 모달로 이동 (아래 backdrop) */}
 
-          <div style={card}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>👀 거리센서</div>
-            <div style={{ fontSize: 11, color: palette.textMuted, marginBottom: 10 }}>
-              앞에 있는 물체와의 거리
+      </div>
+
+      {/* ⚙️ 설정 모달 — backdrop + 가운데 카드 */}
+      {settingsOpen && (
+        <div
+          onClick={() => setSettingsOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 50,
+            background: 'rgba(0,0,0,0.4)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              ...card,
+              width: '100%', maxWidth: 720, maxHeight: '90vh',
+              overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 16,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 20 }}>⚙️</span>
+              <strong style={{ fontSize: 16 }}>설정</strong>
+              <div style={{ flex: 1 }} />
+              <button
+                onClick={() => setSettingsOpen(false)}
+                style={{
+                  fontFamily: 'inherit', fontSize: 14, fontWeight: 800,
+                  background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                  padding: '4px 10px', cursor: 'pointer',
+                }}
+              >닫기 ✕</button>
             </div>
-            <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <div style={{ fontWeight: 900, fontSize: 56, lineHeight: 1, color: distanceReactivity ? palette.tertiary : palette.textMuted }}>
-                {board.lastDistanceCm ?? '—'}
-              </div>
-              <div style={{ fontSize: 13, color: palette.textMuted, marginTop: 4 }}>cm</div>
-            </div>
-            <div style={{
-              height: 8, borderRadius: 4, background: palette.bg, border: border.brutal, overflow: 'hidden',
+
+            {/* 거리 반응 모드 */}
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
+              background: distanceReactivity ? palette.accent : palette.tilePink,
+              border: border.brutal, borderRadius: radius.sm, padding: '12px 14px',
+              boxShadow: shadow.brutalSm,
             }}>
-              <div style={{
-                height: '100%',
-                width: `${Math.min(100, ((board.lastDistanceCm ?? 0) / 75) * 100)}%`,
-                background: palette.tertiary,
-                transition: `width ${m.fast}`,
-              }} />
+              <input
+                type="checkbox"
+                checked={distanceReactivity}
+                onChange={(e) => setDistanceReactivity(e.target.checked)}
+                style={{ width: 18, height: 18 }}
+              />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 900, fontSize: 14 }}>👀 거리 반응 모드</div>
+                <div style={{ fontSize: 11, color: palette.textMuted, marginTop: 2 }}>
+                  AI 가 앞에 있는 물체와의 거리에 따라 동작을 바꿔요.
+                </div>
+              </div>
+              <div style={{ fontWeight: 900, fontSize: 22, minWidth: 60, textAlign: 'right' }}>
+                {board.lastDistanceCm ?? '—'} <span style={{ fontSize: 11, color: palette.textMuted }}>cm</span>
+              </div>
+            </label>
+
+            {/* 모터 길들이기 */}
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>🔧 모터 길들이기 (어른용)</div>
+              <div style={{ fontSize: 11, color: palette.textMuted, marginBottom: 10 }}>
+                ▶ 시동 눌러보고, 안 돌면 + 로 한 칸씩 올려보세요. 천천히/보통/빠르게 매핑이 즉시 갱신됩니다.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                {MOTOR_IDS.map((id) => {
+                  const dir = cal.current.dirOverride[id];
+                  const v = cal.current.startThreshold[id];
+                  return (
+                    <div key={id} style={{
+                      ...card,
+                      background: dir === 1 ? palette.accent : palette.tilePink,
+                      padding: 10, gap: 6,
+                      display: 'flex', flexDirection: 'column',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                        <span style={{ fontWeight: 900, fontSize: 14 }}>{id}</span>
+                        <button
+                          onClick={() => onToggleDir(id)}
+                          style={{
+                            fontFamily: 'inherit', fontWeight: 700, fontSize: 10,
+                            background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                            padding: '2px 5px', cursor: 'pointer',
+                          }}
+                        >{dir === 1 ? '정' : '역'}</button>
+                      </div>
+                      <div style={{ textAlign: 'center', fontSize: 10, color: palette.textMuted, marginTop: 2 }}>시동</div>
+                      <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 22, lineHeight: 1 }}>V{v}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                        <button onClick={() => onAdjustThreshold(id, -1)} disabled={v <= 0}
+                          style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: palette.panel, border: border.brutal, borderRadius: radius.sm, padding: '3px 0', cursor: 'pointer', opacity: v <= 0 ? 0.4 : 1 }}>−</button>
+                        <button onClick={() => onAdjustThreshold(id, +1)} disabled={v >= 9}
+                          style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: palette.panel, border: border.brutal, borderRadius: radius.sm, padding: '3px 0', cursor: 'pointer', opacity: v >= 9 ? 0.4 : 1 }}>+</button>
+                      </div>
+                      <button onClick={() => onTestStart(id)} disabled={!isConnected || isExecuting}
+                        style={{ fontFamily: 'inherit', fontWeight: 800, fontSize: 11, background: palette.tertiary, color: '#fff', border: border.brutal, borderRadius: radius.sm, padding: '5px 0', cursor: 'pointer', opacity: (!isConnected || isExecuting) ? 0.5 : 1 }}>
+                        ▶ 시동
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            {!distanceReactivity && (
-              <div style={{ fontSize: 10, color: palette.textMuted, marginTop: 8, textAlign: 'center' }}>
-                거리 반응 모드를 켜면 AI가 거리에 반응하는 코드를 만들어요.
+
+            {/* 거리 그래프 */}
+            {isConnected && (
+              <div>
+                <div style={{ fontSize: 11, color: palette.textMuted, marginBottom: 6 }}>
+                  거리 시각화 (0~75cm 범위)
+                </div>
+                <div style={{
+                  height: 12, borderRadius: 6, background: palette.bg, border: border.brutal, overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    width: `${Math.min(100, ((board.lastDistanceCm ?? 0) / 75) * 100)}%`,
+                    background: palette.tertiary,
+                    transition: `width ${m.fast}`,
+                  }} />
+                </div>
               </div>
             )}
           </div>
-        </section>
-
-      </div>
+        </div>
+      )}
     </main>
   );
 }
