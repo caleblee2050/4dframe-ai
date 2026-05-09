@@ -601,8 +601,23 @@ export default function PlayPage() {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
+      // 조이스틱/작품 OFF 또는 페이지 떠날 때 모터 강제 정지 (안전)
+      if (keysPressed.size > 0) {
+        keysPressed.clear();
+        onJoystickMove(0, 0, 0);
+      }
     };
   }, [showJoystick, artwork, isConnected, onJoystickMove]);
+
+  // 페이지 unmount 시 마이크 cleanup — recognitionRef leak 방지
+  useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch {}
+        recognitionRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <main
