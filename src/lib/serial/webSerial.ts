@@ -120,6 +120,9 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
     if (!_writer) {
       throw new Error('보드가 연결되지 않았습니다. 먼저 연결 버튼을 눌러주세요.');
     }
+    // 디버그: 자연어 모드에서 어떤 V/W/A/S/D/숫자 명령이 보드에 가는지 dev tools 에서 추적용.
+    // (성능 영향 미미 — payload 가 1~3 글자 단위)
+    if (typeof window !== 'undefined') console.log('[serial→]', JSON.stringify(payload));
     await _writer.write(encoder.encode(payload));
   },
 }));
