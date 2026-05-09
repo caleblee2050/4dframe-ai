@@ -428,7 +428,9 @@ export default function PlayPage() {
 
     const recognition = new SRClass();
     recognition.lang = 'ko-KR';
-    recognition.continuous = false;       // 한 번 발화 → 자동 종료 (단순/안정)
+    // continuous=true: 사용자가 다시 ⏸ 누를 때까지 듣기. Chrome 기본 침묵 timeout
+    // 짧음 (continuous=false 면 초장에 즉시 종료) — 이거 우회. 자동 재시작은 안 함.
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognitionRef.current = recognition;
 
@@ -496,9 +498,13 @@ export default function PlayPage() {
   // 🕹 직접 조종 — 차동 조향 (skid steering).
   // 좌/우 가상 모터 = 4WD 의 (M1+M3) / (M2+M4). 한 축 두 바퀴 자동차도 같은 매핑으로 직진/제자리회전.
   // PWM 개별 변조 (X{idx}{duty}) 는 v1.3+ 만 지원 → fw 자동 분기.
+  // 🚨 deps 비움: useBoardStore.getState() 직접 호출 (zustand 의 비반응적 접근).
+  // board 객체를 deps 에 넣으면 거리센서 cm 100ms 갱신마다 onJoystickMove 새 ref →
+  // useEffect re-run → cleanup 의 stopAll 호출 → 키보드 누르고 있어도 끊어짐(타다다다).
   const lastJoyRef = useRef<{ t: number; signature: string }>({ t: 0, signature: '' });
   const onJoystickMove = useCallback((x: number, y: number, mag: number) => {
-    if (!isConnected) return;
+    const b = useBoardStore.getState();
+    if (b.status !== 'connected') return;
     const now = Date.now();
 
     // 정지 명령 (mag=0) 은 throttle 우회 — 키 떼는 즉시 멈춰야 함
@@ -506,7 +512,7 @@ export default function PlayPage() {
       const sig = 'STOP';
       if (lastJoyRef.current.signature === sig) return;
       lastJoyRef.current = { t: now, signature: sig };
-      void board.send(GLOBAL.stopAll);
+      void b.send(GLOBAL.stopAll);
       return;
     }
 
@@ -520,8 +526,7 @@ export default function PlayPage() {
     const norm = Math.max(Math.abs(left), Math.abs(right), 1);
     left /= norm; right /= norm;
 
-    const fw = board.lastBoot?.fw;
-    const v13 = isV13Plus(fw);
+    const v13 = isV13Plus(b.lastBoot?.fw);
 
     const lLevel = Math.min(9, Math.round(Math.abs(left) * 9));
     const rLevel = Math.min(9, Math.round(Math.abs(right) * 9));
@@ -535,10 +540,8 @@ export default function PlayPage() {
 
     const cmds: string[] = [];
     if (v13) {
-      // 좌 = M1(D6 idx=1) + M3(D9 idx=2). 우 = M2(D5 idx=0) + M4(D10 idx=3).
       cmds.push(`X1${lLevel}`, `X2${lLevel}`, `X0${rLevel}`, `X3${rLevel}`);
     }
-    // PWM 0 인 모터는 시동 명령 생략 (어차피 안 도니까)
     if (lLevel > 0 && lDir !== 0) {
       cmds.push(lDir > 0 ? '1' : '!');
       cmds.push(lDir > 0 ? '3' : '#');
@@ -547,8 +550,8 @@ export default function PlayPage() {
       cmds.push(rDir > 0 ? '2' : '@');
       cmds.push(rDir > 0 ? '4' : '$');
     }
-    if (cmds.length > 0) void board.send(cmds.join(''));
-  }, [board, isConnected]);
+    if (cmds.length > 0) void b.send(cmds.join(''));
+  }, []);   // ★ deps 비움 — 이게 핵심 fix
 
   // ⌨️ 키보드 화살표 → 조이스틱 — 직접 조종 ON 또는 자동차 작품 시 활성.
   // textarea/input focus 중에는 무시 (입력 방해 X).
@@ -601,7 +604,10 @@ export default function PlayPage() {
         onJoystickMove(0, 0, 0);
       }
     };
-  }, [showJoystick, artwork, isConnected, onJoystickMove]);
+    // onJoystickMove 는 deps 비운 stable 콜백 — 여기 deps 에 넣어도 영향 없음.
+    // showJoystick / artwork / isConnected 변경 시만 re-attach.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showJoystick, artwork, isConnected]);
 
   // 페이지 unmount 시 마이크 cleanup — recognitionRef leak 방지
   useEffect(() => {
