@@ -408,7 +408,9 @@ export default function PlayPage() {
   const restartCountRef = useRef(0);
   const finalTextRef = useRef('');
   const [listening, setListening] = useState(false);
-  const MAX_MIC_RESTART = 8;   // 침묵 자동 종료 시 최대 8회 재시작 (≈ 1~2분 듣기)
+  // 사용자 화면 진단: 마지막 mic 이벤트 한 줄 표시
+  const [micStatus, setMicStatus] = useState<string>('');
+  const MAX_MIC_RESTART = 12;   // 침묵 자동 종료 시 최대 12회 재시작
 
   const onMicToggle = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -443,8 +445,14 @@ export default function PlayPage() {
       recognition.onstart = () => {
         console.log('[mic] start (try', restartCountRef.current + 1, ')');
         setListening(true);
+        setMicStatus(`🎤 듣는 중… (시도 ${restartCountRef.current + 1})`);
       };
-      recognition.onspeechstart = () => console.log('[mic] speech detected');
+      recognition.onspeechstart = () => {
+        console.log('[mic] speech detected');
+        setMicStatus('🗣 말소리 감지됨');
+        // 사용자가 발화 시작 → 정상 동작 중. restart count 리셋 (긴 발화 허용)
+        restartCountRef.current = 0;
+      };
       recognition.onresult = (e) => {
         let interim = '';
         for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -453,35 +461,40 @@ export default function PlayPage() {
           if (r.isFinal) finalTextRef.current += t; else interim += t;
         }
         console.log('[mic] result:', { final: finalTextRef.current, interim });
+        setMicStatus(`✍️ "${(finalTextRef.current + interim).slice(0, 40)}"`);
         setInput(finalTextRef.current + interim);
+        // 결과 들어옴 = 정상 동작. restart count 리셋.
+        restartCountRef.current = 0;
       };
       recognition.onerror = (e) => {
         console.warn('[mic] error', e);
-        if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+        const errKey = e?.error ?? 'unknown';
+        setMicStatus(`⚠️ ${errKey}`);
+        if (errKey === 'not-allowed' || errKey === 'service-not-allowed') {
           stoppedByUserRef.current = true;
           alert('마이크 권한이 차단되어 있어요. 자물쇠 아이콘 → 마이크 허용으로 바꿔주세요.');
         }
-        // 'no-speech', 'aborted', 'network' 등은 onend 가 처리
       };
       recognition.onend = () => {
         console.log('[mic] end (stoppedByUser=' + stoppedByUserRef.current + ', restarts=' + restartCountRef.current + ')');
-        // 사용자가 직접 ⏸ 누른 경우 또는 재시작 한도 초과 → 진짜 종료
         if (stoppedByUserRef.current || restartCountRef.current >= MAX_MIC_RESTART) {
           setListening(false);
+          setMicStatus(stoppedByUserRef.current ? '' : '⏹ 자동 종료 (한도)');
           recognitionRef.current = null;
           return;
         }
-        // 자동 재시작 (Chrome 침묵 timeout 회피). race 회피 위해 작은 delay.
         restartCountRef.current++;
+        setMicStatus(`🔄 재시도 ${restartCountRef.current}/${MAX_MIC_RESTART}`);
         setTimeout(() => {
           if (!stoppedByUserRef.current) startNew();
-        }, 150);
+        }, 300);   // delay 늘림 — Chrome SR engine 안정화
       };
 
       try {
         recognition.start();
       } catch (e) {
         console.warn('[mic] start 실패:', e);
+        setMicStatus(`❌ 시작 실패: ${e}`);
         setListening(false);
         recognitionRef.current = null;
       }
@@ -974,6 +987,13 @@ export default function PlayPage() {
             >
               {isGenerating ? '생각 중…' : '🪄 보내기 (엔터)'}
             </button>
+            {micStatus && (
+              <span style={{
+                fontSize: 11, color: palette.textMain,
+                background: palette.tilePink, border: border.brutal, borderRadius: 999,
+                padding: '4px 10px', fontWeight: 700,
+              }}>{micStatus}</span>
+            )}
             <span style={{ fontSize: 11, color: palette.textMuted }}>또는 예시 누르기:</span>
             {SAMPLE_PROMPTS.map((p) => (
               <button
