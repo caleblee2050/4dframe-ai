@@ -44,6 +44,27 @@ const card: React.CSSProperties = {
   padding: 16,
 };
 
+// 사진 dataURL → maxSide 픽셀 너비/높이로 리사이즈. JPEG 0.85 품질.
+async function resizeImageDataURL(dataURL: string, maxSide: number): Promise<string> {
+  if (typeof window === 'undefined') return dataURL;
+  const img = new Image();
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('image load failed'));
+    img.src = dataURL;
+  });
+  const ratio = Math.min(1, maxSide / Math.max(img.width, img.height));
+  if (ratio === 1) return dataURL;
+  const w = Math.round(img.width * ratio);
+  const h = Math.round(img.height * ratio);
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return dataURL;
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.85);
+}
+
 const stepIcon: Record<Step['do'], string> = {
   spin: '🔄', drive: '🚗', servo: '🎚', speed: '⚡',
   stop: '⏹', wait: '⏱', wait_for_distance: '👀', repeat: '🔁',
@@ -264,8 +285,66 @@ export default function PlayPage() {
     abortRef.current?.abort();
     setProgram(skill.program);
     setInput(`${skill.emoji} ${skill.label}`);
-    // 다음 tick 에 onExecute (program state 적용 후)
     setTimeout(() => { void onExecute(); }, 50);
+  };
+
+  // 📷 사진으로 작품 인식
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [identifying, setIdentifying] = useState(false);
+  interface IdentifyResult {
+    artwork: NonNullable<PromptContext['artwork']>;
+    confidence: number;
+    greeting: string;
+    reasoning: string;
+    ideas: string[];
+  }
+  const [identifyResult, setIdentifyResult] = useState<IdentifyResult | null>(null);
+
+  const onPickImage = () => fileInputRef.current?.click();
+
+  const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      alert('이미지는 4MB 이하로 부탁해요.');
+      return;
+    }
+
+    // dataURL 변환 + 너비 1024 로 리사이즈 (네트워크 절약 + 인식 정확도 충분)
+    const dataURL = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+    const resized = await resizeImageDataURL(dataURL, 1024);
+
+    setIdentifying(true);
+    setIdentifyResult(null);
+    try {
+      const res = await fetch('/api/identify-artwork', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ image: resized }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        alert(errBody.error ?? '인식 실패. 잠시 후 다시 시도해 주세요.');
+        return;
+      }
+      const json: IdentifyResult = await res.json();
+      setIdentifyResult(json);
+      // 작품 자동 선택
+      if (json.artwork && json.artwork !== 'free') {
+        setArtwork(json.artwork);
+      }
+    } catch {
+      alert('네트워크 오류. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setIdentifying(false);
+      e.target.value = '';   // 같은 파일 재선택 가능하게
+    }
   };
 
   // 🕹 직접 조종 — 차동 조향 (skid steering).
@@ -447,7 +526,76 @@ export default function PlayPage() {
           >
             {sound.muted ? '🔇 소리 꺼짐' : '🔊 소리 켜짐'}
           </button>
+          <button
+            onClick={onPickImage}
+            disabled={identifying}
+            title="작품을 사진 찍어 보여주면 AI 가 알아맞혀요"
+            style={{
+              ...btn(palette.tileBlue, palette.textMain),
+              padding: '8px 12px', fontSize: 13,
+              opacity: identifying ? 0.5 : 1,
+            }}
+          >
+            {identifying ? '🔍 보는 중…' : '📷 사진으로 알려줄게'}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={onFileSelected}
+            style={{ display: 'none' }}
+          />
         </section>
+
+        {/* 사진 인식 결과 카드 */}
+        {identifyResult && (
+          <section style={{
+            ...card,
+            background: palette.tileBlue,
+            display: 'flex', flexDirection: 'column', gap: 8,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 22 }}>📷</span>
+              <strong style={{ fontSize: 16 }}>{identifyResult.greeting}</strong>
+              <span style={{ fontSize: 11, color: palette.textMuted, marginLeft: 'auto' }}>
+                자신감 {Math.round(identifyResult.confidence * 100)}%
+              </span>
+            </div>
+            <div style={{ fontSize: 13, color: palette.textMain }}>
+              {identifyResult.reasoning}
+            </div>
+            {identifyResult.ideas.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
+                  이렇게 해볼래?
+                </span>
+                {identifyResult.ideas.map((idea, i) => (
+                  <button
+                    key={i}
+                    onClick={() => setInput(idea)}
+                    style={{
+                      ...btn(palette.panel, palette.textMain),
+                      padding: '4px 8px', fontSize: 12,
+                    }}
+                  >
+                    {idea}
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setIdentifyResult(null)}
+              style={{
+                alignSelf: 'flex-end', fontSize: 11, color: palette.textMuted,
+                background: 'transparent', border: 'none', cursor: 'pointer',
+                textDecoration: 'underline',
+              }}
+            >
+              닫기
+            </button>
+          </section>
+        )}
 
         {/* 🕹 직접 조종 — 자동차 작품 선택 시 노출 (차동 조향). */}
         {(artwork === 'car_4wd') && (
