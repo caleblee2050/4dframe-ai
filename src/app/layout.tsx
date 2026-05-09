@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Outfit, Noto_Sans_KR } from "next/font/google";
+import { Outfit, Noto_Sans_KR, Dongle, Jua } from "next/font/google";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -12,6 +12,23 @@ const notoSansKR = Noto_Sans_KR({
   variable: "--font-noto-sans-kr",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700", "800"],
+  display: "swap",
+});
+
+// 4DFrame-Android 의 dongle_bold 와 매치 — 어린이 친화 둥근 한국어 폰트.
+// 학생용 페이지 (/play) 에서 사용.
+const dongle = Dongle({
+  variable: "--font-dongle",
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  display: "swap",
+});
+
+// Jua — 더 굵고 둥근 한국어 폰트. 큰 제목/버튼에 사용.
+const jua = Jua({
+  variable: "--font-jua",
+  subsets: ["latin"],
+  weight: ["400"],
   display: "swap",
 });
 
@@ -34,7 +51,7 @@ export default function RootLayout({
   return (
     <html lang="ko" className="dark">
       <body
-        className={`${outfit.variable} ${notoSansKR.variable} font-sans antialiased`}
+        className={`${outfit.variable} ${notoSansKR.variable} ${dongle.variable} ${jua.variable} font-sans antialiased`}
       >
         {children}
       </body>

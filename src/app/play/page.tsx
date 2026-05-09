@@ -30,22 +30,28 @@ import { SpeedGauge } from '@/components/play/SpeedGauge';
 import { ServoGauge } from '@/components/play/ServoGauge';
 import { CameraPanel } from '@/components/play/CameraPanel';
 
-// Flutter Material lightBlue (원본 Theme.primaryColor)
+// 4DFrame-Android 디자인 톤
+//   - 배경 흰색
+//   - dongle_bold 폰트 (한국 어린이 친화 둥근 손글씨)
+//   - 오렌지 강조 버튼 (ic_btn_fill_org)
+//   - 로고/일러스트는 /public/fdland/ 에서
 const C = {
   bg: '#FFFFFF',
-  scaffoldBg: '#FAFAFA',
-  primary: '#03A9F4',         // Material lightBlue 500
-  primaryDark: '#0288D1',
-  primaryLight: '#B3E5FC',
-  accent: '#FF9800',
+  scaffoldBg: '#FFFFFF',
+  primary: '#FF8A3D',         // 오렌지 (4D Land ic_btn_fill_org 추정)
+  primaryDark: '#E5731F',
+  primaryLight: '#FFD9B8',
+  accent: '#03A9F4',          // 보조 (조이스틱 등에서)
   text: '#212121',
   textSecondary: '#616161',
   textMuted: '#9E9E9E',
-  divider: '#E0E0E0',
-  border: '#E0E0E0',          // 게이지 컴포넌트용 alias
+  divider: '#E8E8E8',
+  border: '#E8E8E8',
   ok: '#4CAF50',
   err: '#F44336',
 };
+
+const FONT_PLAY = "'Dongle', 'Jua', 'Noto Sans KR', system-ui, sans-serif";
 
 const ARTWORKS: Array<{ id: PromptContext['artwork']; label: string; emoji: string }> = [
   { id: 'free', label: '자유', emoji: '🛠️' },
@@ -216,42 +222,52 @@ export default function PlayPage() {
       minHeight: '100vh',
       background: C.scaffoldBg,
       color: C.text,
-      fontFamily: "'Outfit', 'Noto Sans KR', system-ui, sans-serif",
-      fontWeight: 500,
+      fontFamily: FONT_PLAY,
+      fontWeight: 700,
     }}>
-      {/* AppBar (원본: lightBlue 풀너비, device명 + Connect) */}
+      {/* AppBar (4DFrame-Android 톤: 흰 배경 + 로고 가운데 + 양쪽 버튼) */}
       <header style={{
-        background: C.primary,
-        color: '#fff',
-        height: 56,
+        background: '#FFFFFF',
+        color: C.text,
+        height: 64,
         padding: '0 16px',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+        borderBottom: `1px solid ${C.divider}`,
       }}>
-        <div style={{ fontSize: 18, fontWeight: 500, flex: 1 }}>
-          {board.lastBoot ? board.lastBoot.boardId : '4DFrame Mechatronics'}
-        </div>
+        {/* 좌측: 음소거 + 카메라 */}
         <button onClick={() => sound.toggleMute()} title="소리" style={appBarBtn}>
           {sound.muted ? '🔇' : '🔊'}
         </button>
         <button onClick={() => setCameraOn(!cameraOn)} title="카메라"
-          style={{ ...appBarBtn, background: cameraOn ? 'rgba(255,255,255,0.3)' : 'transparent' }}>
+          style={{ ...appBarBtn, background: cameraOn ? C.primaryLight : 'transparent', color: cameraOn ? C.primaryDark : C.text }}>
           📷
         </button>
+        {history.length > 0 && (
+          <button onClick={onResetSession} title="새로 시작" style={appBarBtn}>🔄</button>
+        )}
+        {/* 가운데: 로고 (4DFrame-Android logo3.png) */}
+        <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/fdland/logo3.png" alt="4DFrame" style={{ height: 32 }} />
+          <span style={{ fontFamily: FONT_PLAY, fontSize: 22, fontWeight: 700, color: C.primaryDark }}>
+            친구
+          </span>
+        </div>
+        {/* 우측: Restart + Connect */}
         {isConnected && (
-          <button onClick={() => sendByte('Y')} style={appBarPrimaryBtn}>RESTART</button>
+          <button onClick={() => sendByte('Y')} style={ghostBtn}>RESTART</button>
         )}
         {!isConnected ? (
           <button onClick={() => board.connect()}
             disabled={board.status === 'requesting' || board.status === 'opening'}
-            style={appBarPrimaryBtn}>
+            style={fillOrgBtn}>
             {board.status === 'requesting' ? '포트 선택…' :
-             board.status === 'opening' ? '연결 중…' : 'CONNECT'}
+             board.status === 'opening' ? '연결 중…' : '🔌 보드 연결'}
           </button>
         ) : (
-          <button onClick={() => board.disconnect()} style={appBarPrimaryBtn}>DISCONNECT</button>
+          <button onClick={() => board.disconnect()} style={ghostBtn}>연결 끊기</button>
         )}
       </header>
 
@@ -496,30 +512,41 @@ export default function PlayPage() {
   );
 }
 
+// 4DFrame-Android 스타일 버튼
 const appBarBtn: React.CSSProperties = {
-  fontFamily: 'inherit', fontSize: 14,
-  background: 'transparent', color: '#fff',
-  border: 'none', borderRadius: 4, width: 36, height: 36, cursor: 'pointer',
+  fontFamily: FONT_PLAY, fontSize: 18,
+  background: 'transparent', color: '#212121',
+  border: 'none', borderRadius: 999, width: 40, height: 40, cursor: 'pointer',
 };
 
-const appBarPrimaryBtn: React.CSSProperties = {
-  fontFamily: 'inherit', fontWeight: 500, fontSize: 13,
-  background: 'rgba(255,255,255,0.2)', color: '#fff',
-  border: 'none', borderRadius: 4,
-  padding: '6px 14px', cursor: 'pointer',
-  textTransform: 'uppercase',
+// 오렌지 채워진 버튼 (ic_btn_fill_org)
+const fillOrgBtn: React.CSSProperties = {
+  fontFamily: FONT_PLAY, fontWeight: 700, fontSize: 18,
+  background: '#FF8A3D', color: '#fff',
+  border: 'none', borderRadius: 999,
+  padding: '10px 20px', cursor: 'pointer',
+  boxShadow: '0 2px 4px rgba(255, 138, 61, 0.3)',
+};
+
+// 외곽선 버튼 (Disconnect 등)
+const ghostBtn: React.CSSProperties = {
+  fontFamily: FONT_PLAY, fontWeight: 700, fontSize: 16,
+  background: '#FFFFFF', color: '#FF8A3D',
+  border: '2px solid #FF8A3D', borderRadius: 999,
+  padding: '8px 16px', cursor: 'pointer',
 };
 
 const primaryBtnSm: React.CSSProperties = {
-  fontFamily: 'inherit', fontWeight: 500, fontSize: 13,
-  background: '#03A9F4', color: '#fff',
-  border: 'none', borderRadius: 4,
-  padding: '8px 14px', cursor: 'pointer',
+  fontFamily: FONT_PLAY, fontWeight: 700, fontSize: 18,
+  background: '#FF8A3D', color: '#fff',
+  border: 'none', borderRadius: 999,
+  padding: '10px 18px', cursor: 'pointer',
+  boxShadow: '0 2px 4px rgba(255, 138, 61, 0.3)',
 };
 
 const chipBtn: React.CSSProperties = {
-  fontFamily: 'inherit', fontWeight: 500, fontSize: 12,
+  fontFamily: FONT_PLAY, fontWeight: 700, fontSize: 16,
   background: '#fff', color: '#212121',
-  border: '1px solid #E0E0E0', borderRadius: 999,
-  padding: '4px 10px', cursor: 'pointer',
+  border: '1px solid #E8E8E8', borderRadius: 999,
+  padding: '4px 14px', cursor: 'pointer',
 };
