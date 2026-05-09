@@ -76,7 +76,16 @@ export const useCalibrationStore = create<CalibrationState>()(
     {
       name: '4dframe-calibration',
       storage: createJSONStorage(() => localStorage),
-      version: 1,
+      // version 2 (5/9 D-1): v1.3.2 진단 시기 비정상 시동 V (V8/V9) 흔적이 남아
+      // 자연어 모드 단계차를 무력화 — version bump 로 강제 reset, 다음 진입 시 default 적용.
+      version: 2,
+      migrate: (persistedState, version) => {
+        if (version < 2) {
+          // v1.3.2 진단 흔적 폐기 → default initial 적용
+          return { current: initial } as { current: BoardCalibration };
+        }
+        return persistedState as { current: BoardCalibration };
+      },
     }
   )
 );
