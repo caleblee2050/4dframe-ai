@@ -128,17 +128,17 @@ async function executeStep(step: Step, ctx: StepCtx, path: string): Promise<void
 async function execSpin(step: SpinStep, ctx: StepCtx) {
   const motorCfg = MOTORS[step.motor];
   const dirOverride = useCalibrationStore.getState().current.dirOverride[step.motor];
-  const threshold = useCalibrationStore.getState().current.startThreshold;
 
   // 학생이 'reverse' 라고 한 의도와 보드 dirOverride 둘 다 반영.
-  // dirOverride 가 -1 이면 펌웨어가 알아서 반전하므로 학생 의도만 그대로 forward/reverse 바이트로 보낸다.
   const forwardByte = motorCfg.forwardByte;
   const reverseByte = motorCfg.reverseByte;
   const directionByte = (step.direction === 'reverse') ? reverseByte : forwardByte;
 
-  const baseLevel = SPEED_BASE_LEVEL[step.speed];
-  const level = calibratedPwmLevel(step.motor, baseLevel, threshold);
-  await ctx.send(pwmCommand(level));
+  // 🚨 펌웨어 v1.0(원본, 학생 보드) 호환 모드:
+  //   - V0~V9 PWM 명령은 v1.0 에 없음. 보내면 펌웨어가 무시하고 'V'/숫자를 알 수 없는 명령으로 처리.
+  //   - 따라서 PWM 명령 안 보내고 펌웨어 기본 globalPwm(=255, 100%)로 풀파워 동작.
+  //   - 이전 작동하는 Python 코드(keyboard_controller.py) 도 V 명령 안 씀 — 동일 패턴.
+  // 추후 펌웨어 v1.4 일괄 표준화 시 V 명령 도입 검토.
   await ctx.send(directionByte);
 
   if (step.duration_ms !== undefined) {
@@ -152,14 +152,7 @@ async function execSpin(step: SpinStep, ctx: StepCtx) {
 }
 
 async function execDrive(step: DriveStep, ctx: StepCtx) {
-  // 4WD 매크로는 글로벌 PWM 영향을 받음. 우선 PWM 적용 후 W/A/S/D.
-  // 자동차 모드는 모든 모터를 같은 속도로 사용하므로 가장 빡빡한 모터(M4=V5)를 기준으로 보정.
-  const threshold = useCalibrationStore.getState().current.startThreshold;
-  const baseLevel = SPEED_BASE_LEVEL[step.speed];
-  const motors: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
-  const level = motors.reduce((acc, m) => Math.max(acc, calibratedPwmLevel(m, baseLevel, threshold)), 0);
-  await ctx.send(pwmCommand(level));
-
+  // 🚨 v1.0 호환 모드 — V 명령 안 보냄. 펌웨어 globalPwm 기본(255)로 풀파워 4WD.
   const headingByte = {
     forward: GLOBAL.carForward,
     backward: GLOBAL.carBackward,
@@ -176,33 +169,28 @@ async function execDrive(step: DriveStep, ctx: StepCtx) {
 
 async function execServo(step: ServoStep, ctx: StepCtx) {
   const cfg = SERVOS[step.servo];
+  // SG90 한 스텝(±15도) 안정화 시간 ~150ms. 200ms 권장 (Python 키 반복률보다 길게).
+  // 너무 짧으면 빠른 batch 시 stall 또는 명령 누락 발생.
+  const SERVO_STEP_DELAY_MS = 200;
   if (step.to_degrees !== undefined) {
-    // 펌웨어는 ±15도 스텝만 지원 (현 v1.3). 절대각 → 가까운 ±15도 스텝 시퀀스 변환.
-    // posA/posB 추적은 인터프리터가 안 함 — 펌웨어가 self-track. 학생 의도 정확도 우선.
-    // TODO: 5/10 후 펌웨어 v1.4 에서 'P{servo}{deg}' 절대 각 명령 추가 검토.
     const targetSteps = Math.round((step.to_degrees - cfg.defaultPos) / cfg.stepDegrees);
     const byte = targetSteps >= 0 ? cfg.stepUpByte : cfg.stepDownByte;
     for (let n = 0; n < Math.abs(targetSteps); n++) {
       await ctx.send(byte);
-      await ctx.delay(80);  // 서보 한 스텝 안정화
+      await ctx.delay(SERVO_STEP_DELAY_MS);
     }
   } else if (step.step !== undefined) {
     const byte = step.step >= 0 ? cfg.stepUpByte : cfg.stepDownByte;
     for (let n = 0; n < Math.abs(step.step); n++) {
       await ctx.send(byte);
-      await ctx.delay(80);
+      await ctx.delay(SERVO_STEP_DELAY_MS);
     }
   }
 }
 
 async function execSpeed(step: SpeedStep, ctx: StepCtx) {
+  // 🚨 v1.0 호환 모드 — V 명령 보내지 않음. 인터프리터 로컬 상태만 추적.
   ctx.setSpeed(step.level);
-  // 글로벌 PWM 도 미리 적용해두면 다음 매크로(W/A/S/D)에 그대로 적용됨
-  const threshold = useCalibrationStore.getState().current.startThreshold;
-  const baseLevel = SPEED_BASE_LEVEL[step.level];
-  // M4 기준 (가장 빡빡)
-  const level = calibratedPwmLevel('M4', baseLevel, threshold);
-  await ctx.send(pwmCommand(level));
 }
 
 async function execStop(step: StopStep, ctx: StepCtx) {

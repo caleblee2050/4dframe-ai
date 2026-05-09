@@ -495,9 +495,16 @@ export default function PlayPage() {
           <ServoGauge label="B (꼬리)" onUp={() => void sendByte('6')} onDown={() => void sendByte('^')} disabled={!isConnected} colors={C} />
         </div>
 
-        {/* 중앙: SpeedGauge (Expanded) */}
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          <SpeedGauge onSpeedChange={(v) => void sendByte(`V${v}`)} disabled={!isConnected} colors={C} />
+        {/* 중앙: SpeedGauge (Expanded)
+            펌웨어 v1.0(원본, 학생 보드)에 V 명령 없음 — Python 호환 모드.
+            글로벌 PWM 펌웨어 기본값(255=100%)으로 풀파워 동작. 시각 피드백만 변경.
+            속도 조절은 펌웨어 v1.4 표준화 후 도입 예정. */}
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+          <SpeedGauge onSpeedChange={() => { /* v1.0 호환 — V 명령 안 보냄 */ }}
+            disabled={!isConnected} colors={C} />
+          <div style={{ fontSize: 11, color: '#9E9E9E', textAlign: 'center', marginTop: 4 }}>
+            (현재 보드: 풀파워 고정. 속도 조절은 곧 추가)
+          </div>
         </div>
 
         {/* 우: Joystick */}

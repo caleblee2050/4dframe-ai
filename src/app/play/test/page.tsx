@@ -226,6 +226,9 @@ export default function PlayTestPage() {
     SB: { up: '6', down: '^' },
   };
 
+  // SG90 한 스텝 안정화 시간 — 220ms 권장. 너무 짧으면 stall.
+  const SERVO_STEP_MS = 220;
+
   // 서보를 N×15도 만큼 한 방향으로 — 한 번 누를 때 N번 연속 송신.
   const onServoStep = async (id: ServoId, dir: 'up' | 'down') => {
     if (board.status !== 'connected') return;
@@ -233,7 +236,7 @@ export default function PlayTestPage() {
     const count = servoStepCount[id];
     for (let i = 0; i < count; i++) {
       await board.send(byte);
-      await new Promise((r) => setTimeout(r, 100));   // 펌웨어 처리 + SG90 안정화
+      await new Promise((r) => setTimeout(r, SERVO_STEP_MS));
     }
     setServoAngle((s) => ({
       ...s,
@@ -242,27 +245,23 @@ export default function PlayTestPage() {
   };
 
   // 서보 풀 시퀀스 검증 — 90 → 0 → 180 → 90.
-  // 풀 가동 범위에서 정상 동작하는지 + SA/SB 따로 동작하는지 확인.
   const onServoSweep = async (id: ServoId) => {
     if (board.status !== 'connected') return;
     const cur = servoAngle[id];
-    // 1) 현재 → 0도 (down × ceil(cur/15))
     const stepsDown1 = Math.ceil(cur / 15);
     for (let i = 0; i < stepsDown1; i++) {
       await board.send(SERVO_BYTES[id].down);
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r) => setTimeout(r, SERVO_STEP_MS));
     }
-    await new Promise((r) => setTimeout(r, 400));
-    // 2) 0도 → 180도 (up × 12)
+    await new Promise((r) => setTimeout(r, 500));
     for (let i = 0; i < 12; i++) {
       await board.send(SERVO_BYTES[id].up);
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r) => setTimeout(r, SERVO_STEP_MS));
     }
-    await new Promise((r) => setTimeout(r, 400));
-    // 3) 180도 → 90도 (down × 6)
+    await new Promise((r) => setTimeout(r, 500));
     for (let i = 0; i < 6; i++) {
       await board.send(SERVO_BYTES[id].down);
-      await new Promise((r) => setTimeout(r, 120));
+      await new Promise((r) => setTimeout(r, SERVO_STEP_MS));
     }
     setServoAngle((s) => ({ ...s, [id]: 90 }));
   };
