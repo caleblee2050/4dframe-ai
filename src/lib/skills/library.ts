@@ -42,8 +42,9 @@ export const SKILLS: Skill[] = [
         ]},
         { do: 'stop' },
         { do: 'play_sound', sound: 'cheer' },
-        { do: 'say', text: '[happy]와! 출렁출렁!' },
+        { do: 'say', text: '[happy]와! 출렁출렁! 어땠어?' },
       ],
+      variation_chips: ['더 신나게!', '학교종 켜고', '거꾸로 흔들기', '천천히 8번'],
     },
   },
 
@@ -64,8 +65,9 @@ export const SKILLS: Skill[] = [
           { do: 'spin', motor: 'M1', speed: '보통', direction: 'reverse', duration_ms: 400 },
         ]},
         { do: 'stop' },
-        { do: 'say', text: '[excited]노래랑 같이 흔들렸지?' },
+        { do: 'say', text: '[excited]노래랑 같이 흔들렸지? 한 번 더?' },
       ],
+      variation_chips: ['반짝반짝으로', '나비야로', '더 빠르게', '곰세마리도'],
     },
   },
 
@@ -89,8 +91,9 @@ export const SKILLS: Skill[] = [
         { do: 'drive', heading: 'turn_right', speed: '보통', duration_ms: 800 },
         { do: 'drive', heading: 'forward', speed: '보통', duration_ms: 1500 },
         { do: 'stop' },
-        { do: 'say', text: '[happy]도착!' },
+        { do: 'say', text: '[happy]도착! 더 멀리 가볼까?' },
       ],
+      variation_chips: ['반대로 도는 코스', '음악 켜고 가기', '느리게 한 바퀴', '더 멀리 더 빠르게'],
     },
   },
 
@@ -115,8 +118,9 @@ export const SKILLS: Skill[] = [
         { do: 'servo', servo: 'SB', step: -4 },
         { do: 'wait', ms: 300 },
         { do: 'servo', servo: 'SA', step: -5 },    // 입 다물기
-        { do: 'say', text: '[happy]와! 무서웠어?' },
+        { do: 'say', text: '[happy]와! 무서웠어? 또 잡아먹을까?' },
       ],
+      variation_chips: ['죠스 음악 켜고', '꼬리만 흔들기', '입 빠르게 짝짝', '천천히 한 번'],
     },
   },
 
@@ -140,8 +144,9 @@ export const SKILLS: Skill[] = [
         { do: 'speed', level: '천천히' },
         { do: 'spin', motor: 'M1', speed: '천천히', direction: 'forward', duration_ms: 5000 },
         { do: 'stop' },
-        { do: 'say', text: '[curious]태엽 다 풀렸네...' },
+        { do: 'say', text: '[curious]태엽 다 풀렸네... 다시 감을까?' },
       ],
+      variation_chips: ['다시 태엽 감기', '거꾸로 돌리기', '더 길게 돌리기', '반짝반짝으로'],
     },
   },
 
@@ -160,7 +165,9 @@ export const SKILLS: Skill[] = [
         { do: 'speed', level: '보통' },
         { do: 'spin', motor: 'M1', speed: '보통', direction: 'forward', duration_ms: 6000 },
         { do: 'stop' },
+        { do: 'say', text: '[happy]어지러우면 거꾸로 돌려볼까?' },
       ],
+      variation_chips: ['거꾸로 돌리기', '음악 같이', '점점 빠르게', '천천히 길게'],
     },
   },
 ];

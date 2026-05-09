@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { Joystick } from '@/components/play/Joystick';
 import { isV13Plus } from '@/lib/commands/commands';
 import { skillsForArtwork, type Skill } from '@/lib/skills/library';
+import { useCustomSkillsStore, type CustomSkill } from '@/lib/skills/customStore';
 import { useBoardStore } from '@/lib/serial/webSerial';
 import { useCalibrationStore } from '@/lib/calibration/store';
 import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
@@ -117,6 +118,7 @@ export default function PlayPage() {
   const board = useBoardStore();
   const cal = useCalibrationStore();
   const sound = useSoundStore();
+  const customSkills = useCustomSkillsStore();
 
   const [artwork, setArtwork] = useState<PromptContext['artwork']>('free');
   const [distanceReactivity, setDistanceReactivity] = useState(false);
@@ -134,6 +136,25 @@ export default function PlayPage() {
   const [sayMessages, setSayMessages] = useState<Array<{ text: string; ts: number }>>([]);
   const [showTrace, setShowTrace] = useState(false);   // 실행 과정 펼침 여부
   const [showJoystick, setShowJoystick] = useState(false);   // 직접 조종 카드 표시 (작품 무관 토글)
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const suggestionsRef = useRef<HTMLDivElement | null>(null);
+
+  // 제안 칩 클릭 → input 에 채우고 textarea focus + 끝에 커서. 자동 전송 X — 학생이 추가 주문 작성.
+  const onPickSuggestion = useCallback((chip: string) => {
+    setInput((prev) => {
+      const trimmed = prev.trim();
+      // 이미 비슷하면 그냥 chip 만, 아니면 prev + " " + chip 으로 누적도 고려 가능. v1 = 그냥 chip 으로 교체.
+      void trimmed;
+      return chip;
+    });
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    });
+  }, []);
   const abortRef = useRef<AbortController | null>(null);
 
   const isConnected = board.status === 'connected';
@@ -258,6 +279,10 @@ export default function PlayPage() {
     });
     setIsExecuting(false);
     setCurrentStepIndex(null);
+    // 동작 끝나면 후속 제안으로 시선 끌기
+    requestAnimationFrame(() => {
+      suggestionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   };
 
   const onStopExecution = async () => {
@@ -288,10 +313,9 @@ export default function PlayPage() {
     cal.toggleDir(motor);
   };
 
-  // ▶ 스킬 실행 — AI 안 거치고 미리 정의된 DSL 즉시 실행.
-  // user gesture chain 안에서 즉시 실행해야 AudioContext.resume() 통과 → 멜로디 재생 가능.
-  // setProgram 은 React 렌더링 batch 라 setTimeout 없이 program 인자 직접 전달.
-  const onRunSkill = (skill: Skill) => {
+  // ▶ 스킬 실행 — built-in (Skill) 또는 custom (CustomSkill) 모두 처리.
+  // user gesture chain 안에서 즉시 실행 → AudioContext.resume() 통과 → 멜로디 재생.
+  const onRunSkill = (skill: Skill | CustomSkill) => {
     if (isExecuting) return;
     if (!isConnected) {
       alert('보드를 먼저 연결해주세요.');
@@ -301,6 +325,24 @@ export default function PlayPage() {
     setProgram(skill.program);
     setInput(`${skill.emoji} ${skill.label}`);
     void runProgramDirect(skill.program);
+  };
+
+  // 💾 현재 program 을 내 스킬로 저장
+  const onSaveSkill = () => {
+    if (!program) return;
+    const defaultLabel = stripAudioTags(program.intro ?? '').slice(0, 16) || '내 동작';
+    const label = window.prompt('이 동작에 이름을 붙여줘! (1~16자)', defaultLabel);
+    if (!label || label.trim().length === 0) return;
+    const trimmed = label.trim().slice(0, 16);
+    const emojiInput = window.prompt('이모지 하나 골라줘 (예: 🌟 🎯 💖 🚀)', '⭐');
+    const emoji = (emojiInput?.trim() || '⭐').slice(0, 4);
+    customSkills.add({
+      artwork: (program.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
+      label: trimmed,
+      emoji,
+      program,
+    });
+    alert(`저장 완료! "${emoji} ${trimmed}" — 작품 카드 옆에서 다시 실행할 수 있어.`);
   };
 
   // 외부에서 program 받아 즉시 실행 — 스킬 칩이 user gesture 안에서 호출.
@@ -344,6 +386,9 @@ export default function PlayPage() {
     });
     setIsExecuting(false);
     setCurrentStepIndex(null);
+    requestAnimationFrame(() => {
+      suggestionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   };
 
   // 🎤 음성 입력 — Web Speech API (Chrome/Edge 한국어). 유치원생 친화.
@@ -614,6 +659,40 @@ export default function PlayPage() {
                 ))}
               </div>
             )}
+
+            {/* 내 스킬 칩 — 학생이 저장한 커스텀 동작 */}
+            {customSkills.skills.filter((s) => s.artwork === artwork).length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
+                  💖 내 스킬
+                </span>
+                {customSkills.skills.filter((s) => s.artwork === artwork).map((s) => (
+                  <span key={s.id} style={{ position: 'relative', display: 'inline-flex' }}>
+                    <button
+                      onClick={() => onRunSkill(s)}
+                      disabled={!isConnected || isExecuting}
+                      style={{
+                        ...btn(palette.accent, palette.textMain),
+                        padding: '6px 24px 6px 10px', fontSize: 12,
+                        opacity: (!isConnected || isExecuting) ? 0.4 : 1,
+                      }}
+                    >
+                      {s.emoji} {s.label}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); if (confirm(`"${s.emoji} ${s.label}" 지울까?`)) customSkills.remove(s.id); }}
+                      title="삭제"
+                      style={{
+                        position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                        width: 16, height: 16, fontSize: 10, lineHeight: 1,
+                        background: 'transparent', border: 'none',
+                        color: palette.textMuted, cursor: 'pointer',
+                      }}
+                    >✕</button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div style={{ flex: 1 }} />
           <button
@@ -705,6 +784,7 @@ export default function PlayPage() {
           </div>
           <div style={{ position: 'relative' }}>
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -828,6 +908,21 @@ export default function PlayPage() {
                     <span style={{ fontSize: 12, color: palette.textMuted }}>
                       동작 {program.steps.length}개 준비됨
                     </span>
+                    <button
+                      onClick={onSaveSkill}
+                      disabled={isExecuting}
+                      title="이 동작을 내 스킬로 저장"
+                      style={{
+                        fontFamily: 'inherit', fontWeight: 800, fontSize: 12,
+                        background: palette.accent, color: palette.textMain,
+                        border: border.brutal, borderRadius: radius.sm,
+                        padding: '6px 10px', cursor: 'pointer',
+                        boxShadow: shadow.brutalSm,
+                        opacity: isExecuting ? 0.4 : 1,
+                      }}
+                    >
+                      💾 내 스킬로 저장
+                    </button>
                     <div style={{ flex: 1 }} />
                     <button
                       onClick={() => setShowTrace((v) => !v)}
@@ -843,23 +938,34 @@ export default function PlayPage() {
                   </div>
                 )}
 
-                {/* 다음 동작 제안 (variation_chips) — 선제 제안. 실행 버튼 옆에. */}
+                {/* 다음 동작 제안 (variation_chips) — 동작 종료 후 큰 카드로 강조. */}
                 {program.variation_chips && program.variation_chips.length > 0 && (
-                  <div style={{ marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 6, fontWeight: 700 }}>
-                      ✨ 다음에 이렇게 해볼까?
+                  <div
+                    ref={suggestionsRef}
+                    style={{
+                      marginBottom: 10,
+                      background: !isExecuting && currentStepIndex === null && program.steps.length > 0
+                        ? palette.tilePink   // 실행 끝났을 때 강조
+                        : palette.bg,
+                      border: border.brutal, borderRadius: radius.sm,
+                      padding: 12,
+                      transition: 'background 0.3s',
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 900, marginBottom: 8 }}>
+                      ✨ 이어서 이런 거 어때?  <span style={{ fontSize: 10, color: palette.textMuted, fontWeight: 600 }}>(눌러서 더 적어봐)</span>
                     </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                       {program.variation_chips.map((chip, i) => (
                         <button
                           key={i}
-                          onClick={() => sendPrompt(chip)}
+                          onClick={() => onPickSuggestion(chip)}
                           disabled={isGenerating}
                           style={{
-                            fontFamily: 'inherit', fontWeight: 800, fontSize: 13,
+                            fontFamily: 'inherit', fontWeight: 800, fontSize: 14,
                             background: palette.secondary,
                             border: border.brutal, borderRadius: 999,
-                            padding: '6px 14px', cursor: 'pointer',
+                            padding: '8px 16px', cursor: 'pointer',
                             boxShadow: shadow.brutalSm,
                           }}
                         >{chip}</button>
