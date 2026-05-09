@@ -18,6 +18,7 @@ import { palette, radius, shadow, border, motion as m } from '@/lib/design/token
 import { MOTORS, GLOBAL } from '@/lib/commands/commands';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
 import { useSoundStore, playEffect, speakText, stopSpeaking, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
+import { playMelody } from '@/lib/sound/melodySynth';
 
 const MOTOR_IDS: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
 
@@ -236,6 +237,15 @@ export default function PlayPage() {
         else if (e.type === 'play_sound') {
           playEffect(e.sound, e.volume);
         }
+        else if (e.type === 'play_tune') {
+          // 멜로디 재생. await_melody=true 면 멜로디 끝까지 대기 (interpreter 의 await 와 함께).
+          const muted = useSoundStore.getState().muted;
+          if (e.await_melody) {
+            await playMelody(e.tune, e.tempo, muted);
+          } else {
+            void playMelody(e.tune, e.tempo, muted);
+          }
+        }
         else if (e.type === 'calibrate') {
           const msg = ({
             motor_individual_variance: '모터마다 시동 V 가 달라요. 안 돌면 + 로 한 칸씩 올려보세요.',
@@ -279,6 +289,8 @@ export default function PlayPage() {
   };
 
   // ▶ 스킬 실행 — AI 안 거치고 미리 정의된 DSL 즉시 실행.
+  // user gesture chain 안에서 즉시 실행해야 AudioContext.resume() 통과 → 멜로디 재생 가능.
+  // setProgram 은 React 렌더링 batch 라 setTimeout 없이 program 인자 직접 전달.
   const onRunSkill = (skill: Skill) => {
     if (isExecuting) return;
     if (!isConnected) {
@@ -288,7 +300,50 @@ export default function PlayPage() {
     abortRef.current?.abort();
     setProgram(skill.program);
     setInput(`${skill.emoji} ${skill.label}`);
-    setTimeout(() => { void onExecute(); }, 50);
+    void runProgramDirect(skill.program);
+  };
+
+  // 외부에서 program 받아 즉시 실행 — 스킬 칩이 user gesture 안에서 호출.
+  const runProgramDirect = async (prog: Program) => {
+    if (isExecuting) return;
+    setIsExecuting(true);
+    setSayMessages([]);
+    setCurrentStepIndex(null);
+
+    // intro 음성 끝까지 await — "음성으로 먼저 → 동작" 흐름.
+    if (prog.intro) {
+      setSayMessages([{ text: stripAudioTags(prog.intro), ts: Date.now() }]);
+      await speakText(prog.intro);
+    }
+
+    abortRef.current = new AbortController();
+    await runProgram(prog, {
+      signal: abortRef.current.signal,
+      onEvent: async (e: InterpreterEvent) => {
+        if (e.type === 'step_start') setCurrentStepIndex(e.index);
+        else if (e.type === 'step_end') setCurrentStepIndex(null);
+        else if (e.type === 'say') {
+          setSayMessages((s) => [...s, { text: stripAudioTags(e.text), ts: Date.now() }]);
+          await speakText(e.text);
+        }
+        else if (e.type === 'play_sound') playEffect(e.sound, e.volume);
+        else if (e.type === 'play_tune') {
+          const muted = useSoundStore.getState().muted;
+          if (e.await_melody) await playMelody(e.tune, e.tempo, muted);
+          else void playMelody(e.tune, e.tempo, muted);
+        }
+        else if (e.type === 'calibrate') {
+          const msg = ({
+            motor_individual_variance: '모터마다 시동 V 가 달라요. 안 돌면 + 로 한 칸씩 올려보세요.',
+            motor_direction_mirror: '모터가 거꾸로 돌면 모터 카드의 [정방향/역방향] 버튼을 누르세요.',
+            servo_power: '서보가 약해요. 9V 배터리가 꽂혀 있는지 확인해주세요.',
+          })[e.reason];
+          setSayMessages((s) => [...s, { text: `🔧 ${msg}`, ts: Date.now() }]);
+        }
+      },
+    });
+    setIsExecuting(false);
+    setCurrentStepIndex(null);
   };
 
   // 🎤 음성 입력 — Web Speech API (Chrome/Edge 한국어). 유치원생 친화.
