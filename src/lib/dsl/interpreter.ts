@@ -14,7 +14,7 @@ import type {
   WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep, PlaySoundStep, PlayTuneStep,
 } from './schema';
 import {
-  MOTORS, SERVOS, GLOBAL, SPEED_BASE_LEVEL, pwmCommand, isV13Plus,
+  MOTORS, SERVOS, GLOBAL, pwmCommand, isV13Plus, speedToLevel,
 } from '@/lib/commands/commands';
 import { calibratedPwmLevel, useCalibrationStore } from '@/lib/calibration/store';
 import { useBoardStore } from '@/lib/serial/webSerial';
@@ -140,8 +140,8 @@ async function execSpin(step: SpinStep, ctx: StepCtx) {
   // 자동 감지: useBoardStore.lastBoot.fw 가 "1.3" 이상이면 v1.3+ 가정.
   const fw = useBoardStore.getState().lastBoot?.fw;
   if (isV13Plus(fw)) {
-    const baseLevel = SPEED_BASE_LEVEL[step.speed];
-    const level = calibratedPwmLevel(step.motor, baseLevel, threshold);
+    // 시동 V 균등 분배 — 천천히=시동V / 빠르게=V9 / 보통=중간 (5/9 D-1 결정)
+    const level = calibratedPwmLevel(step.motor, step.speed, threshold);
     await ctx.send(pwmCommand(level));
   }
 
@@ -160,11 +160,11 @@ async function execSpin(step: SpinStep, ctx: StepCtx) {
 async function execDrive(step: DriveStep, ctx: StepCtx) {
   const fw = useBoardStore.getState().lastBoot?.fw;
   if (isV13Plus(fw)) {
-    // v1.3+: 가장 빡빡한 모터(M4) 기준으로 글로벌 PWM 보정
+    // 4모터 동시 → 가장 빡빡한 시동 V 기준 매핑 (안 도는 모터 없게).
     const threshold = useCalibrationStore.getState().current.startThreshold;
-    const baseLevel = SPEED_BASE_LEVEL[step.speed];
     const motors: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
-    const level = motors.reduce((acc, m) => Math.max(acc, calibratedPwmLevel(m, baseLevel, threshold)), 0);
+    const maxThreshold = motors.reduce((acc, m) => Math.max(acc, threshold[m]), 0);
+    const level = speedToLevel(step.speed, maxThreshold);
     await ctx.send(pwmCommand(level));
   }
   // v1.0: V 명령 안 보냄. 풀파워.
@@ -209,8 +209,9 @@ async function execSpeed(step: SpeedStep, ctx: StepCtx) {
   const fw = useBoardStore.getState().lastBoot?.fw;
   if (isV13Plus(fw)) {
     const threshold = useCalibrationStore.getState().current.startThreshold;
-    const baseLevel = SPEED_BASE_LEVEL[step.level];
-    const level = calibratedPwmLevel('M4', baseLevel, threshold);
+    const motors: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
+    const maxThreshold = motors.reduce((acc, m) => Math.max(acc, threshold[m]), 0);
+    const level = speedToLevel(step.level, maxThreshold);
     await ctx.send(pwmCommand(level));
   }
   // v1.0: 글로벌 PWM 그대로 (풀파워).

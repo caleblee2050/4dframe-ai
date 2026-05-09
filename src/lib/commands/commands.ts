@@ -78,7 +78,27 @@ export const GLOBAL = {
 } as const;
 
 // 학생 속도 라벨 → 펌웨어 PWM level (0~9)
-// 인터프리터가 보드 캘리브레이션으로 추가 보정함 (max(level, threshold+1))
+// 시동 V (threshold) 기준 균등 배분 — 어른이 /play/test 에서 측정한 시동 V 가 그대로
+// /play 의 학생 라벨 매핑에 반영됨 (zustand persist 통해 localStorage 공유).
+//
+//   천천히 = 시동 V 그대로 (모터가 막 시동 걸리는 최저 속도)
+//   빠르게 = 9 (풀파워)
+//   보통   = 두 값의 중간 반올림
+//
+// 예) 시동 V=3 인 모터 → 천천히=V3, 보통=V6, 빠르게=V9 (PWM 84/168/255)
+//     시동 V=5 인 모터 → 천천히=V5, 보통=V7, 빠르게=V9 (PWM 140/196/255)
+//
+// V Sweep (V3/V5/V7/V9) 의 단계차를 학생 모드에서도 명확히 들리게 하는 게 목적.
+// floor 클램프 제거로 학생 명시 "천천히" 의도 그대로 적용.
+export function speedToLevel(label: SpeedLabel, threshold: number): number {
+  const t = Math.max(0, Math.min(9, threshold));
+  if (label === '천천히') return t;
+  if (label === '빠르게') return 9;
+  // 보통
+  return Math.round((t + 9) / 2);
+}
+
+/** @deprecated speedToLevel 사용. 5/9 D-1 결정으로 floor 클램프 폐기. */
 export const SPEED_BASE_LEVEL: Record<SpeedLabel, number> = {
   '천천히': 5,
   '보통':  7,

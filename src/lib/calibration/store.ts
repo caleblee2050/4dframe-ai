@@ -7,13 +7,14 @@
 //  1. startThreshold[Mn]: 0~9 — 그 모터가 실제로 시동 걸리는 V level
 //  2. dirOverride[Mn]: 1 | -1 — 학생이 F1~F4 토글로 정한 방향
 //
-// 인터프리터가 SpeedLabel('천천히/보통/빠르게') → V level 변환할 때
-//   max(SPEED_BASE_LEVEL[label], startThreshold[motor] + 1) 로 보정.
+// 인터프리터가 SpeedLabel('천천히/보통/빠르게') → V level 변환:
+//   commands.ts:speedToLevel 가 시동 V (threshold) 기준 균등 배분.
+//   천천히 = threshold (시동 V 그대로), 빠르게 = 9, 보통 = 중간.
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { MotorId } from '@/lib/dsl/schema';
-import { MOTORS } from '@/lib/commands/commands';
+import type { MotorId, SpeedLabel } from '@/lib/dsl/schema';
+import { MOTORS, speedToLevel } from '@/lib/commands/commands';
 
 export interface BoardCalibration {
   boardId: string;        // 예: Ami5_V01:<usbProductId>:<usbVendorId> (현실적으로 1보드만 가정)
@@ -80,11 +81,14 @@ export const useCalibrationStore = create<CalibrationState>()(
   )
 );
 
-// 학생 SpeedLabel + 모터 → 보정된 V level (0~9)
+// 학생 SpeedLabel + 모터 → 보드 시동 V 기반 V level (0~9)
+// commands.ts:speedToLevel 가 핵심. 이 함수는 store 의 threshold 와 연결만.
+// floor 클램프 (max(base, threshold+1)) 제거 — 학생 "천천히" 의도가 V9 로 끌려가
+// 자연어 모드에서 단계차가 안 들리던 문제 해결 (5/9 D-1 결정).
 export function calibratedPwmLevel(
   motor: MotorId,
-  baseLevel: number,
+  label: SpeedLabel,
   threshold: Record<MotorId, number>
 ): number {
-  return Math.min(9, Math.max(baseLevel, threshold[motor] + 1));
+  return speedToLevel(label, threshold[motor]);
 }
