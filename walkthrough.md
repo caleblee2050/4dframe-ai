@@ -80,7 +80,7 @@ npm run dev                   # 로컬 dev (Mac에서 권장 환경)
 
 ## 3. 미해결 / 검증 필요
 
-### 🔴 펌웨어 v1.3.2 회귀 발견 (5/9 저녁) → v1.3.3 작성, 플래시 대기
+### ✅ 펌웨어 v1.3.2 → v1.3.3 회귀 fix + 플래시 + V Sweep 검증 완료 (5/9 저녁)
 
 #### 사용자 직접 테스트 결과 (Mac + PC 둘 다, v1.3.2 펌웨어)
 - **M3 (D9), M4 (D10)**: V0~V8 무반응, **V9(최고 속도)만 동작** ← 핵심
@@ -123,14 +123,60 @@ npm run dev                   # 로컬 dev (Mac에서 권장 환경)
 
 핵심 학습: Verify (CMD_READ_PAGE) 가 가짜 매치 진단의 결정적 단서. 없으면 progress bar 만 보고 성공 오인.
 
-#### PC 검증 (다음 단계)
-1. 보드 PC 로 옮기고 https://4dframe-ai.vercel.app/play/test 접속
-2. 보드 연결 → 헤더 우측 FW 뱃지가 **`1.3.3 ✓ 최신`** 인지
-3. **V Sweep** — M3/M4 가 V3 → V5 → V7 → V9 단계별로 점진적 속도 차이 보이는지
-4. 서보 풀 가동 (SA, SB) — 90 → 0 → 180 → 90
-5. 자연어 시연 — `/play` 페이지
+#### PC 검증 결과 (5/9 저녁)
+- ✅ FW 뱃지 `1.3.3 ✓ 최신`
+- ✅ V Sweep — M2/M3/M4 모두 V3/V5/V7/V9 단계차 명확 (청각 + 시각)
+- ✅ 서보 SA/SB 풀 가동 — 부드럽게 동작
+- ❌ `/play` 자연어 모드 — speed 차이 안 들림 (별개 이슈, 아래 참조)
 
-→ 4dframe-ai 라이브 PWA 자체는 변경 없음 (이미 v1.3+ 자동 분기 로직 있음).
+### 🟠 자연어 모드 speed 무차별 — 5/9 저녁 fix
+사용자 보고: 자연어로 "천천히→점점 빠르게→천천히→정지" 명시했는데 단계차 미체감.
+모터 1~4 모두 동일 증상.
+
+#### 원인
+`calibration/store.ts:calibratedPwmLevel` 의 floor 클램프:
+```ts
+return Math.min(9, Math.max(baseLevel, threshold[motor] + 1));
+```
+v1.3.2 회귀 진단 때 사용자가 캘리브레이션 카드에서 시동 V 를 V8/V9 까지
+올려가며 진단 → localStorage 에 흔적 → v1.3.3 플래시 후에도 calibration
+값은 그대로 → 학생 "천천히=V5" 가 max(5, 9) = V9 풀파워로 클램프 →
+모든 speed 라벨이 사실상 V9 → 단계차 무.
+
+#### fix (`207643c` + `8cbf29b`, 푸시 완료)
+**floor 클램프 폐기 + 시동 V 균등 배분.**
+```ts
+// commands.ts
+export function speedToLevel(label: SpeedLabel, threshold: number): number {
+  const t = Math.max(0, Math.min(9, threshold));
+  if (label === '천천히') return t;          // 시동 V 그대로
+  if (label === '빠르게') return 9;           // 풀파워
+  return Math.round((t + 9) / 2);             // 보통 = 중간
+}
+```
+
+매핑 결과:
+- 시동 V=3 모터 → 천천히 V3, 보통 V6, 빠르게 V9 (PWM 84/168/255 — V Sweep 4단계와 흡사)
+- 시동 V=5 모터 → 천천히 V5, 보통 V7, 빠르게 V9 (PWM 140/196/255)
+- 시동 V=8 인 보드 (비정상) → 천천히 V8, 보통 V9, 빠르게 V9 (단계차 줄지만 모터 한계)
+
+#### 새 운영 컨셉 (어른+아이 분리)
+- **/play/test (어른용)**: 모터별 시동 V 측정 + 캘리브레이션 카드
+- **/play (학생용)**: localStorage 의 시동 V 자동 적용 → 학생은 그냥 "천천히/보통/빠르게" 라벨로 놀기
+- zustand persist 로 두 페이지 자동 공유 (이미 구현)
+
+#### 디버그
+- `webSerial.send` 에 `console.log('[serial→]', payload)` 추가 → PC dev tools Console
+  탭에서 어떤 V/W/A 명령이 보드에 가는지 실시간 확인 가능
+
+#### 검증 (다음 액션)
+1. PC 크롬에서 https://4dframe-ai.vercel.app/play 강제 새로고침 (Ctrl+Shift+R)
+2. 같은 자연어 발화 ("천천히→빠르게→천천히→정지") 시연
+3. **기대**: V 단계차가 명확히 들림 (각 모터 시동 V 기준 매핑)
+4. dev tools Console 탭 열어 두면 `[serial→]` 로그로 어떤 V level 가는지 확인
+5. 만약 여전히 차이 안 들리면: `localStorage` 에 V8/V9 같은 비정상 시동 V 가 저장된
+   상태일 수 있음 → /play/test 의 모터 캘리브 카드 "리셋" 버튼 또는 console 에서
+   `localStorage.removeItem('4dframe-calibration'); location.reload()`
 
 ### 🟡 미해결 / 보류
 - **디자인 원본** — 사용자 제공 대기 (현재 4DFrame-Android 톤 임시 적용. 사용자 다시 줄 예정)
