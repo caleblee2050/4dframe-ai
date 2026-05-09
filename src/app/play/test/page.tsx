@@ -214,6 +214,66 @@ export default function PlayTestPage() {
     setTimeout(() => { void board.send(GLOBAL.stopAll); }, 1000);
   };
 
+  // 서보 캘리브레이션 — 단계 크기 (×1=15도, ×2=30도, ×3=45도) + 추정 각도
+  const SERVO_IDS = ['SA', 'SB'] as const;
+  type ServoId = typeof SERVO_IDS[number];
+
+  const [servoStepCount, setServoStepCount] = useState<Record<ServoId, number>>({ SA: 1, SB: 1 });
+  const [servoAngle, setServoAngle] = useState<Record<ServoId, number>>({ SA: 90, SB: 90 });
+
+  const SERVO_BYTES: Record<ServoId, { up: string; down: string }> = {
+    SA: { up: '%', down: '5' },
+    SB: { up: '6', down: '^' },
+  };
+
+  // 서보를 N×15도 만큼 한 방향으로 — 한 번 누를 때 N번 연속 송신.
+  const onServoStep = async (id: ServoId, dir: 'up' | 'down') => {
+    if (board.status !== 'connected') return;
+    const byte = dir === 'up' ? SERVO_BYTES[id].up : SERVO_BYTES[id].down;
+    const count = servoStepCount[id];
+    for (let i = 0; i < count; i++) {
+      await board.send(byte);
+      await new Promise((r) => setTimeout(r, 100));   // 펌웨어 처리 + SG90 안정화
+    }
+    setServoAngle((s) => ({
+      ...s,
+      [id]: Math.max(0, Math.min(180, s[id] + (dir === 'up' ? 15 : -15) * count)),
+    }));
+  };
+
+  // 서보 풀 시퀀스 검증 — 90 → 0 → 180 → 90.
+  // 풀 가동 범위에서 정상 동작하는지 + SA/SB 따로 동작하는지 확인.
+  const onServoSweep = async (id: ServoId) => {
+    if (board.status !== 'connected') return;
+    const cur = servoAngle[id];
+    // 1) 현재 → 0도 (down × ceil(cur/15))
+    const stepsDown1 = Math.ceil(cur / 15);
+    for (let i = 0; i < stepsDown1; i++) {
+      await board.send(SERVO_BYTES[id].down);
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    await new Promise((r) => setTimeout(r, 400));
+    // 2) 0도 → 180도 (up × 12)
+    for (let i = 0; i < 12; i++) {
+      await board.send(SERVO_BYTES[id].up);
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    await new Promise((r) => setTimeout(r, 400));
+    // 3) 180도 → 90도 (down × 6)
+    for (let i = 0; i < 6; i++) {
+      await board.send(SERVO_BYTES[id].down);
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    setServoAngle((s) => ({ ...s, [id]: 90 }));
+  };
+
+  const onAdjustServoStepCount = (id: ServoId, delta: 1 | -1) => {
+    setServoStepCount((s) => ({
+      ...s,
+      [id]: Math.max(1, Math.min(6, s[id] + delta)),
+    }));
+  };
+
   const isConnected = board.status === 'connected';
 
   return (
@@ -382,6 +442,99 @@ export default function PlayTestPage() {
                 );
               })}
             </div>
+          </div>
+        </section>
+
+        {/* 서보 캘리브레이션 */}
+        <section style={card}>
+          <h2 style={{ marginTop: 0 }}>서보 캘리브레이션 (J3 = SA / J5 = SB)</h2>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 12 }}>
+            펌웨어 ±15도 단위. 한 번에 ×N 단계만큼 움직임. ▶ 풀 가동은 90→0→180→90 검증.
+            ⚠ 서보가 잘 안 움직이면 9V 배터리 점검.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+            {SERVO_IDS.map((id) => {
+              const stepCount = servoStepCount[id];
+              const angle = servoAngle[id];
+              return (
+                <div key={id} style={{
+                  ...card,
+                  background: id === 'SA' ? palette.tileBlue : palette.tileMint,
+                  padding: 12,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                    <span style={{ fontWeight: 900, fontSize: 16 }}>
+                      {id} {id === 'SA' ? '(D3, J3)' : '(D11, J5)'}
+                    </span>
+                    <span style={{ fontSize: 12, color: palette.textMuted }}>
+                      추정 {angle}°
+                    </span>
+                  </div>
+
+                  {/* 단계 크기 (×N = N×15도) */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, color: palette.textMuted, minWidth: 60 }}>
+                      한 번에:
+                    </span>
+                    <button
+                      onClick={() => onAdjustServoStepCount(id, -1)}
+                      disabled={stepCount <= 1}
+                      style={{
+                        fontFamily: 'inherit', fontWeight: 900, fontSize: 14,
+                        background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                        padding: '2px 10px', cursor: 'pointer', opacity: stepCount <= 1 ? 0.4 : 1,
+                      }}>−</button>
+                    <span style={{ fontWeight: 900, fontSize: 16, minWidth: 70, textAlign: 'center' }}>
+                      ×{stepCount} = {stepCount * 15}°
+                    </span>
+                    <button
+                      onClick={() => onAdjustServoStepCount(id, +1)}
+                      disabled={stepCount >= 6}
+                      style={{
+                        fontFamily: 'inherit', fontWeight: 900, fontSize: 14,
+                        background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                        padding: '2px 10px', cursor: 'pointer', opacity: stepCount >= 6 ? 0.4 : 1,
+                      }}>+</button>
+                  </div>
+
+                  {/* 좌/우 단계 이동 */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                    <button
+                      onClick={() => onServoStep(id, 'down')}
+                      disabled={!isConnected}
+                      style={{
+                        fontFamily: 'inherit', fontWeight: 800, fontSize: 13,
+                        background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                        cursor: 'pointer', opacity: isConnected ? 1 : 0.5, padding: '6px 0',
+                      }}>◀ −{stepCount * 15}°</button>
+                    <button
+                      onClick={() => onServoStep(id, 'up')}
+                      disabled={!isConnected}
+                      style={{
+                        fontFamily: 'inherit', fontWeight: 800, fontSize: 13,
+                        background: palette.panel, border: border.brutal, borderRadius: radius.sm,
+                        cursor: 'pointer', opacity: isConnected ? 1 : 0.5, padding: '6px 0',
+                      }}>+{stepCount * 15}° ▶</button>
+                  </div>
+
+                  {/* 풀 가동 검증 */}
+                  <button
+                    onClick={() => onServoSweep(id)}
+                    disabled={!isConnected}
+                    style={{
+                      fontFamily: 'inherit', fontWeight: 800, fontSize: 13,
+                      background: palette.tertiary, color: '#fff',
+                      border: border.brutal, borderRadius: radius.sm,
+                      cursor: 'pointer', opacity: isConnected ? 1 : 0.5,
+                      padding: '8px 0',
+                      boxShadow: shadow.brutalSm,
+                    }}>▶ 풀 가동 검증 (90→0→180→90)</button>
+                </div>
+              );
+            })}
           </div>
         </section>
 
