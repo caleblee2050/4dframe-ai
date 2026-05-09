@@ -404,7 +404,11 @@ export default function PlayPage() {
     start: () => void; stop: () => void;
   };
   const recognitionRef = useRef<SR | null>(null);
+  const stoppedByUserRef = useRef(false);
+  const restartCountRef = useRef(0);
+  const finalTextRef = useRef('');
   const [listening, setListening] = useState(false);
+  const MAX_MIC_RESTART = 8;   // 침묵 자동 종료 시 최대 8회 재시작 (≈ 1~2분 듣기)
 
   const onMicToggle = useCallback(() => {
     if (typeof window === 'undefined') return;
@@ -415,61 +419,75 @@ export default function PlayPage() {
       return;
     }
 
-    // 이미 듣는 중이면 stop
+    // 이미 듣는 중이면 stop (사용자 명시 종료)
     if (listening && recognitionRef.current) {
+      stoppedByUserRef.current = true;
       try { recognitionRef.current.stop(); } catch {}
       setListening(false);
       recognitionRef.current = null;
       return;
     }
 
-    // SpeechRecognition 자체가 첫 호출 시 권한 prompt — 별도 getUserMedia 로
-    // stream 미리 잡았다 닫으면 race 발생해서 SR 이 즉시 onend (마이크 빠르게 꺼짐 버그).
+    // 새 세션 시작
+    stoppedByUserRef.current = false;
+    restartCountRef.current = 0;
+    finalTextRef.current = '';
 
-    const recognition = new SRClass();
-    recognition.lang = 'ko-KR';
-    // continuous=true: 사용자가 다시 ⏸ 누를 때까지 듣기. Chrome 기본 침묵 timeout
-    // 짧음 (continuous=false 면 초장에 즉시 종료) — 이거 우회. 자동 재시작은 안 함.
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognitionRef.current = recognition;
+    const startNew = () => {
+      const recognition = new SRClass();
+      recognition.lang = 'ko-KR';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognitionRef.current = recognition;
 
-    let finalText = '';
-    recognition.onstart = () => {
-      console.log('[mic] start');
-      setListening(true);
-    };
-    recognition.onspeechstart = () => console.log('[mic] speech detected');
-    recognition.onresult = (e) => {
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        const t = r[0].transcript;
-        if (r.isFinal) finalText += t; else interim += t;
+      recognition.onstart = () => {
+        console.log('[mic] start (try', restartCountRef.current + 1, ')');
+        setListening(true);
+      };
+      recognition.onspeechstart = () => console.log('[mic] speech detected');
+      recognition.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const r = e.results[i];
+          const t = r[0].transcript;
+          if (r.isFinal) finalTextRef.current += t; else interim += t;
+        }
+        console.log('[mic] result:', { final: finalTextRef.current, interim });
+        setInput(finalTextRef.current + interim);
+      };
+      recognition.onerror = (e) => {
+        console.warn('[mic] error', e);
+        if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
+          stoppedByUserRef.current = true;
+          alert('마이크 권한이 차단되어 있어요. 자물쇠 아이콘 → 마이크 허용으로 바꿔주세요.');
+        }
+        // 'no-speech', 'aborted', 'network' 등은 onend 가 처리
+      };
+      recognition.onend = () => {
+        console.log('[mic] end (stoppedByUser=' + stoppedByUserRef.current + ', restarts=' + restartCountRef.current + ')');
+        // 사용자가 직접 ⏸ 누른 경우 또는 재시작 한도 초과 → 진짜 종료
+        if (stoppedByUserRef.current || restartCountRef.current >= MAX_MIC_RESTART) {
+          setListening(false);
+          recognitionRef.current = null;
+          return;
+        }
+        // 자동 재시작 (Chrome 침묵 timeout 회피). race 회피 위해 작은 delay.
+        restartCountRef.current++;
+        setTimeout(() => {
+          if (!stoppedByUserRef.current) startNew();
+        }, 150);
+      };
+
+      try {
+        recognition.start();
+      } catch (e) {
+        console.warn('[mic] start 실패:', e);
+        setListening(false);
+        recognitionRef.current = null;
       }
-      console.log('[mic] result:', { final: finalText, interim });
-      setInput(finalText + interim);
     };
-    recognition.onerror = (e) => {
-      console.warn('[mic] error', e);
-      if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
-        alert('마이크 권한이 차단되어 있어요. 자물쇠 아이콘 → 마이크 허용으로 바꿔주세요.');
-      } else if (e?.error === 'no-speech') {
-        // 조용히 종료 — onend 가 처리
-      }
-    };
-    recognition.onend = () => {
-      console.log('[mic] end');
-      setListening(false);
-      recognitionRef.current = null;
-    };
-    try {
-      recognition.start();
-    } catch (e) {
-      console.warn('[mic] start 실패:', e);
-      setListening(false);
-      recognitionRef.current = null;
-    }
+
+    startNew();
   }, [listening]);
 
   // ⚙️ 설정 모달
