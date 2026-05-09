@@ -391,41 +391,61 @@ export default function PlayPage() {
     });
   };
 
-  // 🎤 음성 입력 — Web Speech API (Chrome/Edge 한국어). 유치원생 친화.
-  // continuous=true + onend 자동 재시작 → ⏸ 누를 때까지 계속 듣기.
+  // 🎤 음성 입력 — Web Speech API (Chrome/Edge 한국어).
+  // 단순 흐름: 한 번 발화 → 결과 input 으로 → 종료. 다시 듣고 싶으면 재클릭.
   type SR = {
     lang: string; continuous: boolean; interimResults: boolean;
+    onstart?: () => void;
     onresult: (e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void;
     onerror: (e: { error?: string }) => void;
     onend: () => void;
+    onspeechstart?: () => void;
+    onspeechend?: () => void;
     start: () => void; stop: () => void;
   };
   const recognitionRef = useRef<SR | null>(null);
-  const stoppedByUserRef = useRef(false);
   const [listening, setListening] = useState(false);
 
-  const onMicToggle = useCallback(() => {
+  const onMicToggle = useCallback(async () => {
     if (typeof window === 'undefined') return;
     const win = window as unknown as { SpeechRecognition?: new () => SR; webkitSpeechRecognition?: new () => SR };
     const SRClass = win.SpeechRecognition || win.webkitSpeechRecognition;
     if (!SRClass) {
-      alert('이 브라우저는 음성 입력을 지원하지 않아요. 크롬을 써주세요!');
-      return;
-    }
-    if (listening && recognitionRef.current) {
-      stoppedByUserRef.current = true;
-      recognitionRef.current.stop();
+      alert('이 브라우저는 음성 입력을 지원하지 않아요. 크롬/엣지를 써주세요!');
       return;
     }
 
-    stoppedByUserRef.current = false;
+    // 이미 듣는 중이면 stop
+    if (listening && recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+      setListening(false);
+      recognitionRef.current = null;
+      return;
+    }
+
+    // 마이크 권한 사전 확인 — getUserMedia 로 명시적 prompt 한 번 통과시킴.
+    // SpeechRecognition 만으로는 일부 환경에서 권한 prompt 가 무음으로 거부될 수 있음.
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());   // 즉시 닫음 (SR 가 자체 stream 관리)
+    } catch (e) {
+      console.warn('[mic] getUserMedia 거부:', e);
+      alert('마이크 권한이 차단되어 있어요. 주소창 왼쪽 자물쇠 → 마이크 → 허용으로 바꿔주세요.');
+      return;
+    }
+
     const recognition = new SRClass();
     recognition.lang = 'ko-KR';
-    recognition.continuous = true;
+    recognition.continuous = false;       // 한 번 발화 → 자동 종료 (단순/안정)
     recognition.interimResults = true;
     recognitionRef.current = recognition;
 
     let finalText = '';
+    recognition.onstart = () => {
+      console.log('[mic] start');
+      setListening(true);
+    };
+    recognition.onspeechstart = () => console.log('[mic] speech detected');
     recognition.onresult = (e) => {
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -433,26 +453,29 @@ export default function PlayPage() {
         const t = r[0].transcript;
         if (r.isFinal) finalText += t; else interim += t;
       }
+      console.log('[mic] result:', { final: finalText, interim });
       setInput(finalText + interim);
     };
     recognition.onerror = (e) => {
       console.warn('[mic] error', e);
-      // 'no-speech' / 'aborted' 등은 침묵 timeout — onend 가 처리
       if (e?.error === 'not-allowed' || e?.error === 'service-not-allowed') {
-        alert('마이크 권한이 차단되어 있어요. 주소창 자물쇠 → 마이크 허용으로 바꿔주세요.');
-        stoppedByUserRef.current = true;
+        alert('마이크 권한이 차단되어 있어요. 자물쇠 아이콘 → 마이크 허용으로 바꿔주세요.');
+      } else if (e?.error === 'no-speech') {
+        // 조용히 종료 — onend 가 처리
       }
     };
     recognition.onend = () => {
-      // 명시적 stop 이 아니라면 자동 재시작 (브라우저 침묵 timeout 회피)
-      if (!stoppedByUserRef.current && recognitionRef.current === recognition) {
-        try { recognition.start(); return; } catch {}
-      }
+      console.log('[mic] end');
       setListening(false);
       recognitionRef.current = null;
     };
-    recognition.start();
-    setListening(true);
+    try {
+      recognition.start();
+    } catch (e) {
+      console.warn('[mic] start 실패:', e);
+      setListening(false);
+      recognitionRef.current = null;
+    }
   }, [listening]);
 
   // ⚙️ 설정 모달
@@ -532,6 +555,54 @@ export default function PlayPage() {
     }
     if (cmds.length > 0) void board.send(cmds.join(''));
   }, [board, isConnected]);
+
+  // ⌨️ 키보드 화살표 → 조이스틱 — 직접 조종 ON 또는 자동차 작품 시 활성.
+  // textarea/input focus 중에는 무시 (입력 방해 X).
+  useEffect(() => {
+    const joystickActive = showJoystick || artwork === 'car_4wd';
+    if (!joystickActive || !isConnected) return;
+
+    const keysPressed = new Set<string>();
+    const updateFromKeys = () => {
+      const ax = (keysPressed.has('ArrowRight') ? 1 : 0) + (keysPressed.has('ArrowLeft') ? -1 : 0);
+      const ay = (keysPressed.has('ArrowDown') ? 1 : 0) + (keysPressed.has('ArrowUp') ? -1 : 0);
+      const len = Math.sqrt(ax * ax + ay * ay);
+      if (len === 0) onJoystickMove(0, 0, 0);
+      else onJoystickMove(ax / len, ay / len, 1);
+    };
+    const isInputFocused = () => {
+      const ae = document.activeElement;
+      const tag = (ae as HTMLElement)?.tagName;
+      return tag === 'TEXTAREA' || tag === 'INPUT' || (ae as HTMLElement)?.isContentEditable;
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      if (isInputFocused()) return;
+      e.preventDefault();
+      if (!keysPressed.has(e.key)) {
+        keysPressed.add(e.key);
+        updateFromKeys();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      if (keysPressed.delete(e.key)) updateFromKeys();
+    };
+    const onBlur = () => {
+      if (keysPressed.size > 0) {
+        keysPressed.clear();
+        onJoystickMove(0, 0, 0);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
+    };
+  }, [showJoystick, artwork, isConnected, onJoystickMove]);
 
   return (
     <main
@@ -737,9 +808,10 @@ export default function PlayPage() {
             <div>
               <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 4 }}>🕹 직접 조종</div>
               <div style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.4 }}>
-                위/아래 = 전후진 속도<br/>
+                위/아래 = 전후진<br/>
                 좌/우 = 회전<br/>
-                대각선 = 속도+회전 동시
+                대각선 = 속도+회전<br/>
+                <strong>⌨️ 화살표 키도 OK</strong>
               </div>
             </div>
             <Joystick
@@ -863,7 +935,29 @@ export default function PlayPage() {
           </div>
         </section>
 
-        {/* AI 응답 영역 — 단순화: intro + 마지막 한마디 + 실행/제안. 디테일은 토글. */}
+        {/* AI 마지막 한마디 — program 무관 항상 노출 (실행 중 멘트가 가려지지 않게) */}
+        {sayMessages.length > 0 && (
+          <section style={{
+            ...card,
+            background: palette.accent,
+            display: 'flex', alignItems: 'flex-start', gap: 10,
+          }}>
+            <span style={{ fontSize: 22 }}>💬</span>
+            <div style={{ flex: 1, fontSize: 15, fontWeight: 700, lineHeight: 1.4 }}>
+              {sayMessages[sayMessages.length - 1].text}
+            </div>
+            <button
+              onClick={() => setSayMessages([])}
+              title="닫기"
+              style={{
+                fontSize: 11, color: palette.textMuted,
+                background: 'transparent', border: 'none', cursor: 'pointer',
+              }}
+            >✕</button>
+          </section>
+        )}
+
+        {/* AI 응답 영역 — 단순화: intro + 실행/제안. 디테일은 토글. */}
         {(isGenerating || streamedText || program || genError) && (
           <section style={card}>
             {genError ? (
@@ -879,13 +973,6 @@ export default function PlayPage() {
                 {program.intro && (
                   <div style={{ background: palette.tileBlue, border: border.brutal, borderRadius: radius.sm, padding: 12, marginBottom: 10, fontSize: 14, fontWeight: 700 }}>
                     💭 {stripAudioTags(program.intro)}
-                  </div>
-                )}
-
-                {/* 라이브 멘트 — 실행 중 마지막 say 만 노출 */}
-                {sayMessages.length > 0 && (
-                  <div style={{ background: palette.accent, border: border.brutal, borderRadius: radius.sm, padding: 12, marginBottom: 10, fontSize: 14, fontWeight: 700 }}>
-                    💬 {sayMessages[sayMessages.length - 1].text}
                   </div>
                 )}
 
