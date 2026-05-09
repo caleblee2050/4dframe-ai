@@ -5,7 +5,9 @@
 // 흐름: 자연어 입력 → /api/chat 스트리밍 → JSON DSL 누적 → validateProgram → 미리보기 → ▶ 실행 → 보드 송신
 // 보조: 모터 캘리브 카드 (시동 V 조절), 거리센서 위젯 + 거리 반응 토글, 보드 연결 헤더.
 
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Joystick } from '@/components/play/Joystick';
+import { isV13Plus } from '@/lib/commands/commands';
 import { useBoardStore } from '@/lib/serial/webSerial';
 import { useCalibrationStore } from '@/lib/calibration/store';
 import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
@@ -250,6 +252,61 @@ export default function PlayPage() {
     cal.toggleDir(motor);
   };
 
+  // 🕹 직접 조종 — 차동 조향 (skid steering).
+  // 좌/우 가상 모터 = 4WD 의 (M1+M3) / (M2+M4). 한 축 두 바퀴 자동차도 같은 매핑으로 직진/제자리회전.
+  // PWM 개별 변조 (X{idx}{duty}) 는 v1.3+ 만 지원 → fw 자동 분기.
+  const lastJoyRef = useRef<{ t: number; signature: string }>({ t: 0, signature: '' });
+  const onJoystickMove = useCallback((x: number, y: number, mag: number) => {
+    if (!isConnected) return;
+    const now = Date.now();
+    if (now - lastJoyRef.current.t < 80) return;   // 80ms throttle
+
+    // 화면 좌표 → 차동 조향. y 화면 아래가 양수, 우리는 forward = 위 = y<0.
+    const fwd = -y;
+    const turn = x;
+    let left = fwd + turn;
+    let right = fwd - turn;
+    const norm = Math.max(Math.abs(left), Math.abs(right), 1);
+    left /= norm; right /= norm;
+
+    const fw = board.lastBoot?.fw;
+    const v13 = isV13Plus(fw);
+
+    if (mag === 0) {
+      const sig = 'STOP';
+      if (lastJoyRef.current.signature === sig) return;
+      lastJoyRef.current = { t: now, signature: sig };
+      void board.send(GLOBAL.stopAll);
+      return;
+    }
+
+    const lLevel = Math.min(9, Math.round(Math.abs(left) * 9));
+    const rLevel = Math.min(9, Math.round(Math.abs(right) * 9));
+    const lDir = left > 0.05 ? 1 : left < -0.05 ? -1 : 0;
+    const rDir = right > 0.05 ? 1 : right < -0.05 ? -1 : 0;
+
+    // 같은 명령 반복 송신 방지 (시리얼 포화 + 펌웨어 race 회피)
+    const sig = `${lLevel}.${lDir}|${rLevel}.${rDir}`;
+    if (lastJoyRef.current.signature === sig) return;
+    lastJoyRef.current = { t: now, signature: sig };
+
+    const cmds: string[] = [];
+    if (v13) {
+      // 좌 = M1(D6 idx=1) + M3(D9 idx=2). 우 = M2(D5 idx=0) + M4(D10 idx=3).
+      cmds.push(`X1${lLevel}`, `X2${lLevel}`, `X0${rLevel}`, `X3${rLevel}`);
+    }
+    // PWM 0 인 모터는 시동 명령 생략 (어차피 안 도니까)
+    if (lLevel > 0 && lDir !== 0) {
+      cmds.push(lDir > 0 ? '1' : '!');
+      cmds.push(lDir > 0 ? '3' : '#');
+    }
+    if (rLevel > 0 && rDir !== 0) {
+      cmds.push(rDir > 0 ? '2' : '@');
+      cmds.push(rDir > 0 ? '4' : '$');
+    }
+    if (cmds.length > 0) void board.send(cmds.join(''));
+  }, [board, isConnected]);
+
   return (
     <main
       style={{
@@ -352,6 +409,35 @@ export default function PlayPage() {
             {sound.muted ? '🔇 소리 꺼짐' : '🔊 소리 켜짐'}
           </button>
         </section>
+
+        {/* 🕹 직접 조종 — 자동차 작품 선택 시 노출 (차동 조향). */}
+        {(artwork === 'car_4wd') && (
+          <section style={{ ...card, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 4 }}>🕹 직접 조종</div>
+              <div style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.4 }}>
+                위/아래 = 전후진 속도<br/>
+                좌/우 = 회전<br/>
+                대각선 = 속도+회전 동시
+              </div>
+            </div>
+            <Joystick
+              onMove={onJoystickMove}
+              disabled={!isConnected}
+              colors={{
+                primary: palette.primary,
+                primaryLight: palette.tilePink,
+                border: palette.textMain,
+                textMuted: palette.textMuted,
+              }}
+            />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, color: palette.textMuted }}>
+                ※ AI 와 동시에 사용해도 됩니다. 조이스틱이 가장 마지막에 보낸 명령이 이김.
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* 자연어 입력 */}
         <section style={card}>

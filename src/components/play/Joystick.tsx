@@ -1,14 +1,19 @@
 'use client';
 
-// 가상 조이스틱 — 단순 div 기반 4방향 (W/A/S/D).
-// nipplejs 가 SSR 시 window 참조 문제 일으켜서 직접 구현 (외부 의존성 X).
+// 가상 조이스틱 — magnitude + angle 아날로그 + 4방향 호환.
+// onMove(x, y, mag) 가 핵심: x ∈ [-1,1] (좌-우), y ∈ [-1,1] (위-아래),
+//   mag ∈ [0,1] (중심으로부터 거리). 차동 조향 / 속도 동시 제어용.
+// onDirection 은 기존 4방향 호환 (단순 모드).
 
 import { useEffect, useRef, useState } from 'react';
 
 type Direction = 'up' | 'down' | 'left' | 'right' | 'stop';
 
 interface Props {
-  onDirection: (dir: Direction) => void;
+  onDirection?: (dir: Direction) => void;
+  // 정교 모드: x,y ∈ [-1,1] (정규화). y>0 = 아래(후진), y<0 = 위(전진).
+  // mag ∈ [0,1]. dead-zone 안에서는 호출 안 함.
+  onMove?: (x: number, y: number, mag: number) => void;
   disabled?: boolean;
   colors: { primary: string; primaryLight: string; border: string; textMuted: string };
 }
@@ -18,7 +23,7 @@ const THUMB = 60;
 const RADIUS = SIZE / 2;
 const DEAD_ZONE = 25;
 
-export function Joystick({ onDirection, disabled, colors }: Props) {
+export function Joystick({ onDirection, onMove, disabled, colors }: Props) {
   const baseRef = useRef<HTMLDivElement | null>(null);
   const [thumbPos, setThumbPos] = useState({ x: 0, y: 0 });
   const lastDirRef = useRef<Direction>('stop');
@@ -39,20 +44,36 @@ export function Joystick({ onDirection, disabled, colors }: Props) {
     }
     setThumbPos({ x: dx, y: dy });
 
-    let dir: Direction = 'stop';
-    if (dist >= DEAD_ZONE) {
-      if (Math.abs(dx) > Math.abs(dy)) dir = dx > 0 ? 'right' : 'left';
-      else dir = dy > 0 ? 'down' : 'up';
+    // 정교 모드 콜백 — 정규화 후 매 프레임 호출
+    if (onMove) {
+      if (dist < DEAD_ZONE) {
+        onMove(0, 0, 0);
+      } else {
+        const nx = dx / max;   // [-1, 1]
+        const ny = dy / max;
+        const mag = Math.min(1, dist / max);
+        onMove(nx, ny, mag);
+      }
     }
-    if (lastDirRef.current !== dir) {
-      lastDirRef.current = dir;
-      onDirection(dir);
+
+    // 4방향 호환 모드
+    if (onDirection) {
+      let dir: Direction = 'stop';
+      if (dist >= DEAD_ZONE) {
+        if (Math.abs(dx) > Math.abs(dy)) dir = dx > 0 ? 'right' : 'left';
+        else dir = dy > 0 ? 'down' : 'up';
+      }
+      if (lastDirRef.current !== dir) {
+        lastDirRef.current = dir;
+        onDirection(dir);
+      }
     }
   };
 
   const stop = () => {
     setThumbPos({ x: 0, y: 0 });
-    if (lastDirRef.current !== 'stop') {
+    if (onMove) onMove(0, 0, 0);
+    if (onDirection && lastDirRef.current !== 'stop') {
       lastDirRef.current = 'stop';
       onDirection('stop');
     }
