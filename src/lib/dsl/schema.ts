@@ -261,7 +261,7 @@ function validateStep(step: Step, path: string): void {
       if (step.volume !== undefined) assertInRange(`${path}.volume`, step.volume, 0, 1);
       return;
     case 'play_tune':
-      if (!['school_bell','twinkle','butterfly','mountain_rabbit','three_bears','beep_pattern'].includes(step.tune))
+      if (!['school_bell','twinkle','butterfly','mountain_rabbit','three_bears','beep_pattern','music_box','jaws'].includes(step.tune))
         throw new DslValidationError(`${path}.tune`, `잘못된 tune: ${step.tune}`);
       if (step.tempo !== undefined) assertInRange(`${path}.tempo`, step.tempo, 0.5, 3);
       return;
@@ -287,7 +287,7 @@ export function validateProgram(input: unknown): Program {
   if (p.steps.length > 200) {
     throw new DslValidationError('$.steps', `steps 길이 0~200, got ${p.steps.length}`);
   }
-  if (p.artwork !== undefined && !['viking','car_4wd','swing','crocodile','free'].includes(p.artwork as string)) {
+  if (p.artwork !== undefined && !['viking','car_4wd','swing','crocodile','ballerina','free'].includes(p.artwork as string)) {
     throw new DslValidationError('$.artwork', `잘못된 artwork: ${p.artwork}`);
   }
   if (p.intro !== undefined && (typeof p.intro !== 'string' || p.intro.length > 280)) {

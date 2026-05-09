@@ -130,6 +130,7 @@ export default function PlayPage() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState<number | null>(null);
   const [sayMessages, setSayMessages] = useState<Array<{ text: string; ts: number }>>([]);
+  const [showTrace, setShowTrace] = useState(false);   // 실행 과정 펼침 여부
   const abortRef = useRef<AbortController | null>(null);
 
   const isConnected = board.status === 'connected';
@@ -335,6 +336,18 @@ export default function PlayPage() {
 
   // ⚙️ 설정 모달
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // 작품 변경 시 이전 작품 메시지/프로그램/입력 초기화 (이전 멘트가 남는 버그 fix).
+  const onArtworkChange = useCallback((next: PromptContext['artwork']) => {
+    if (artwork === next) return;
+    abortRef.current?.abort();
+    setArtwork(next);
+    setProgram(null);
+    setInput('');
+    setSayMessages([]);
+    setCurrentStepIndex(null);
+    setIdentifyResult(null);
+  }, [artwork]);
 
   // 📷 사진으로 작품 인식
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -542,7 +555,7 @@ export default function PlayPage() {
               {ARTWORKS.map((a) => (
                 <button
                   key={a.id}
-                  onClick={() => setArtwork(a.id)}
+                  onClick={() => onArtworkChange(a.id)}
                   style={{
                     ...btn(artwork === a.id ? palette.tertiary : palette.panel,
                             artwork === a.id ? '#fff' : palette.textMain),
@@ -793,10 +806,9 @@ export default function PlayPage() {
           </div>
         </section>
 
-        {/* AI 응답 영역 */}
+        {/* AI 응답 영역 — 단순화: intro + 마지막 한마디 + 실행/제안. 디테일은 토글. */}
         {(isGenerating || streamedText || program || genError) && (
           <section style={card}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>🪄 AI 짝코더 응답</div>
             {genError ? (
               <div style={{ background: '#FFE6E6', border: border.brutal, borderRadius: radius.sm, padding: 12, fontSize: 13 }}>
                 <strong style={{ color: palette.primary }}>오류:</strong>
@@ -806,90 +818,59 @@ export default function PlayPage() {
               </div>
             ) : program ? (
               <div>
+                {/* 시작 한마디 (intro) */}
                 {program.intro && (
-                  <div style={{ background: palette.tileBlue, border: border.brutal, borderRadius: radius.sm, padding: 12, marginBottom: 10 }}>
-                    💭 {program.intro}
+                  <div style={{ background: palette.tileBlue, border: border.brutal, borderRadius: radius.sm, padding: 12, marginBottom: 10, fontSize: 14, fontWeight: 700 }}>
+                    💭 {stripAudioTags(program.intro)}
                   </div>
                 )}
+
+                {/* 라이브 멘트 — 실행 중 마지막 say 만 노출 */}
+                {sayMessages.length > 0 && (
+                  <div style={{ background: palette.accent, border: border.brutal, borderRadius: radius.sm, padding: 12, marginBottom: 10, fontSize: 14, fontWeight: 700 }}>
+                    💬 {sayMessages[sayMessages.length - 1].text}
+                  </div>
+                )}
+
                 {program.steps.length === 0 && (
                   <div style={{ fontSize: 13, color: palette.textMuted, fontStyle: 'italic', marginBottom: 10 }}>
-                    (코드 없이 짝코더가 먼저 물어봤어요. 아래 칩을 누르거나 답해주세요.)
+                    (먼저 물어볼게요. 아래 칩을 누르거나 답해주세요.)
                   </div>
                 )}
-                <ol style={{ paddingLeft: 0, listStyle: 'none', margin: 0 }}>
-                  {program.steps.map((step, i) => {
-                    const active = currentStepIndex === i;
-                    return (
-                      <li
-                        key={i}
-                        style={{
-                          padding: '8px 12px',
-                          marginBottom: 6,
-                          borderRadius: radius.sm,
-                          border: border.brutal,
-                          background: active ? palette.secondary : (i % 2 ? palette.bg : palette.panel),
-                          fontWeight: active ? 900 : 600,
-                          display: 'flex', flexDirection: 'column', gap: 2,
-                        }}
-                      >
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <span style={{ fontSize: 18 }}>{stepIcon[step.do]}</span>
-                          <span style={{ fontSize: 12, color: palette.textMuted, minWidth: 22 }}>#{i + 1}</span>
-                          <span style={{ fontSize: 13 }}>{describeStep(step)}</span>
-                        </div>
-                        {step.hint && (
-                          <div style={{
-                            fontSize: 12,
-                            color: palette.textMuted,
-                            paddingLeft: 36,
-                            fontWeight: 500,
-                            fontStyle: 'italic',
-                          }}>
-                            💡 {step.hint}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ol>
-                {program.learning_points && program.learning_points.length > 0 && (
-                  <div style={{
-                    marginTop: 12,
-                    background: palette.tileMint,
-                    border: border.brutal,
-                    borderRadius: radius.sm,
-                    padding: 12,
-                    boxShadow: shadow.brutalSm,
-                  }}>
-                    <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 6 }}>💡 오늘 배운 것</div>
-                    <ul style={{ paddingLeft: 18, margin: 0 }}>
-                      {program.learning_points.map((lp, i) => (
-                        <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{lp}</li>
-                      ))}
-                    </ul>
+
+                {/* 실행 / 정지 버튼 — 가장 큰 액션, 위로 */}
+                {program.steps.length > 0 && (
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {!isExecuting ? (
+                      <button onClick={onExecute} disabled={!isConnected} style={{ ...btn(palette.tertiary, '#fff'), fontSize: 16, padding: '10px 20px' }}>
+                        ▶ 실행
+                      </button>
+                    ) : (
+                      <button onClick={onStopExecution} style={{ ...btn(palette.primary, '#fff'), fontSize: 16, padding: '10px 20px' }}>⏹ 정지</button>
+                    )}
+                    <span style={{ fontSize: 12, color: palette.textMuted }}>
+                      동작 {program.steps.length}개 준비됨
+                    </span>
+                    <div style={{ flex: 1 }} />
+                    <button
+                      onClick={() => setShowTrace((v) => !v)}
+                      style={{
+                        fontFamily: 'inherit', fontSize: 11, fontWeight: 700,
+                        background: 'transparent', border: 'none',
+                        color: palette.textMuted, cursor: 'pointer',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      {showTrace ? '▲ 실행 과정 숨기기' : '▼ 실행 과정 보기'}
+                    </button>
                   </div>
                 )}
-                {program.questions && program.questions.length > 0 && (
-                  <div style={{
-                    marginTop: 12,
-                    background: palette.tilePink,
-                    border: border.brutal,
-                    borderRadius: radius.sm,
-                    padding: 12,
-                    boxShadow: shadow.brutalSm,
-                  }}>
-                    <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 6 }}>🤔 짝코더가 물어봐요</div>
-                    <ul style={{ paddingLeft: 18, margin: 0 }}>
-                      {program.questions.map((q, i) => (
-                        <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{q}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+
+                {/* 다음 동작 제안 (variation_chips) — 선제 제안. 실행 버튼 옆에. */}
                 {program.variation_chips && program.variation_chips.length > 0 && (
-                  <div style={{ marginTop: 12 }}>
+                  <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 6, fontWeight: 700 }}>
-                      ✨ 다음에 해볼까? (눌러서 보내기)
+                      ✨ 다음에 이렇게 해볼까?
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                       {program.variation_chips.map((chip, i) => (
@@ -909,42 +890,57 @@ export default function PlayPage() {
                     </div>
                   </div>
                 )}
-                {program.steps.length > 0 && (
-                  <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-                    {!isExecuting ? (
-                      <button onClick={onExecute} disabled={!isConnected} style={btn(palette.tertiary, '#fff')}>
-                        ▶ 실행
-                      </button>
-                    ) : (
-                      <button onClick={onStopExecution} style={btn(palette.primary, '#fff')}>⏹ 정지</button>
-                    )}
-                    {!isConnected && (
-                      <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
-                        (보드를 연결하면 실행 가능)
-                      </span>
-                    )}
+
+                {/* 짝코더가 물어보는 질문 */}
+                {program.questions && program.questions.length > 0 && (
+                  <div style={{
+                    background: palette.tilePink,
+                    border: border.brutal, borderRadius: radius.sm,
+                    padding: 12, marginBottom: 10,
+                    boxShadow: shadow.brutalSm,
+                  }}>
+                    <div style={{ fontWeight: 900, fontSize: 13, marginBottom: 6 }}>🤔 같이 정해볼까?</div>
+                    <ul style={{ paddingLeft: 18, margin: 0 }}>
+                      {program.questions.map((q, i) => (
+                        <li key={i} style={{ fontSize: 13, marginBottom: 4 }}>{q}</li>
+                      ))}
+                    </ul>
                   </div>
+                )}
+
+                {/* 실행 과정 — 토글로 펼침. 기본 닫힘. */}
+                {showTrace && program.steps.length > 0 && (
+                  <ol style={{ paddingLeft: 0, listStyle: 'none', margin: '12px 0 0' }}>
+                    {program.steps.map((step, i) => {
+                      const active = currentStepIndex === i;
+                      return (
+                        <li
+                          key={i}
+                          style={{
+                            padding: '6px 10px',
+                            marginBottom: 4,
+                            borderRadius: radius.sm,
+                            border: border.brutal,
+                            background: active ? palette.secondary : palette.bg,
+                            fontWeight: active ? 900 : 500,
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            fontSize: 12,
+                          }}
+                        >
+                          <span style={{ fontSize: 14 }}>{stepIcon[step.do]}</span>
+                          <span style={{ color: palette.textMuted, minWidth: 22 }}>#{i + 1}</span>
+                          <span>{describeStep(step)}</span>
+                        </li>
+                      );
+                    })}
+                  </ol>
                 )}
               </div>
             ) : (
               <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, color: palette.textMuted, whiteSpace: 'pre-wrap' }}>
-                {streamedText || '...'}
+                {streamedText || '생각 중…'}
               </div>
             )}
-          </section>
-        )}
-
-        {/* 메시지 풍선 */}
-        {sayMessages.length > 0 && (
-          <section style={card}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8 }}>💬 짝코더 메시지</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {sayMessages.map((m, i) => (
-                <div key={i} style={{ background: palette.accent, border: border.brutal, borderRadius: radius.sm, padding: '8px 12px', fontSize: 13 }}>
-                  {m.text}
-                </div>
-              ))}
-            </div>
           </section>
         )}
 
