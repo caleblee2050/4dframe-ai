@@ -114,14 +114,24 @@ export default function PlayTestPage() {
   const [running, setRunning] = useState<string | null>(null);
   const [events, setEvents] = useState<InterpreterEvent[]>([]);
   const abortRef = useRef<AbortController | null>(null);
-  const linesEndRef = useRef<HTMLDivElement | null>(null);
-  const eventsEndRef = useRef<HTMLDivElement | null>(null);
+  // 박스 컨테이너 ref — scrollIntoView 가 페이지 전체를 끌어내리는 버그 회피.
+  // 컨테이너의 scrollTop 만 직접 조절해서 박스 안에서만 스크롤.
+  const linesContainerRef = useRef<HTMLDivElement | null>(null);
+  const eventsContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // "끝 근처" 일 때만 자동 스크롤 — 사용자가 위로 올려서 보고 있을 때 끌어내리지 않음.
+  useEffect(() => {
+    const el = linesContainerRef.current;
+    if (!el) return;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (isNearBottom) el.scrollTop = el.scrollHeight;
+  }, [board.lines]);
 
   useEffect(() => {
-    linesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [board.lines]);
-  useEffect(() => {
-    eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = eventsContainerRef.current;
+    if (!el) return;
+    const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (isNearBottom) el.scrollTop = el.scrollHeight;
   }, [events]);
 
   const onRun = async (id: string, program: Program) => {
@@ -449,11 +459,15 @@ export default function PlayTestPage() {
         <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div style={card}>
             <h2 style={{ marginTop: 0 }}>인터프리터 이벤트</h2>
-            <div style={{
-              fontFamily: 'ui-monospace, monospace', fontSize: 12,
-              background: '#F7F4EA', borderRadius: radius.sm, border: border.brutal,
-              padding: 8, height: 220, overflow: 'auto',
-            }}>
+            <div
+              ref={eventsContainerRef}
+              style={{
+                fontFamily: 'ui-monospace, monospace', fontSize: 12,
+                background: '#F7F4EA', borderRadius: radius.sm, border: border.brutal,
+                padding: 8, height: 220, overflow: 'auto',
+                overscrollBehavior: 'contain',
+              }}
+            >
               {events.length === 0 ? <div style={{ color: palette.textMuted }}>아직 실행 안 함</div> :
                 events.map((e, i) => (
                   <div key={i} style={{ marginBottom: 4 }}>
@@ -467,20 +481,22 @@ export default function PlayTestPage() {
                   </div>
                 ))
               }
-              <div ref={eventsEndRef} />
             </div>
           </div>
 
           <div style={card}>
             <h2 style={{ marginTop: 0 }}>시리얼 수신 라인</h2>
-            <div style={{
-              fontFamily: 'ui-monospace, monospace', fontSize: 12,
-              background: palette.textMain, color: palette.bg,
-              borderRadius: radius.sm, padding: 8, height: 220, overflow: 'auto',
-            }}>
+            <div
+              ref={linesContainerRef}
+              style={{
+                fontFamily: 'ui-monospace, monospace', fontSize: 12,
+                background: palette.textMain, color: palette.bg,
+                borderRadius: radius.sm, padding: 8, height: 220, overflow: 'auto',
+                overscrollBehavior: 'contain',
+              }}
+            >
               {board.lines.length === 0 ? <div style={{ opacity: 0.6 }}>(no data)</div> :
                 board.lines.map((line, i) => <div key={i}>{line}</div>)}
-              <div ref={linesEndRef} />
             </div>
           </div>
         </section>
