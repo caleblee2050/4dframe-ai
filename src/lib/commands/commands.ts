@@ -96,3 +96,15 @@ export const USB_FILTER = {
   usbVendorId: 0x0403,
   usbProductId: 0x6001,
 } as const;
+
+// 보드 펌웨어가 v1.3+ (V/X/F/? 명령 지원) 인지 판정.
+// 펌웨어가 BOOT:Ami5_V01:FW1.3 또는 ? 진단 응답으로 FW 채워줌.
+// fw 값 미감지 시 v1.0 가정 (보수적 호환 모드).
+export function isV13Plus(fw: string | null | undefined): boolean {
+  if (!fw) return false;
+  const m = fw.match(/^(\d+)\.(\d+)/);
+  if (!m) return false;
+  const major = parseInt(m[1], 10);
+  const minor = parseInt(m[2], 10);
+  return major > 1 || (major === 1 && minor >= 3);
+}

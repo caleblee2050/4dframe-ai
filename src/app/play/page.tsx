@@ -19,7 +19,7 @@ import { useBoardStore } from '@/lib/serial/webSerial';
 import { useCalibrationStore } from '@/lib/calibration/store';
 import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
 import { validateProgram, type Program } from '@/lib/dsl/schema';
-import { GLOBAL } from '@/lib/commands/commands';
+import { GLOBAL, isV13Plus } from '@/lib/commands/commands';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
 import {
   useSoundStore, playEffect, speakText, stopSpeaking, stripAudioTags, prefetchProgramAudio,
@@ -495,15 +495,22 @@ export default function PlayPage() {
           <ServoGauge label="B (꼬리)" onUp={() => void sendByte('6')} onDown={() => void sendByte('^')} disabled={!isConnected} colors={C} />
         </div>
 
-        {/* 중앙: SpeedGauge (Expanded)
-            펌웨어 v1.0(원본, 학생 보드)에 V 명령 없음 — Python 호환 모드.
-            글로벌 PWM 펌웨어 기본값(255=100%)으로 풀파워 동작. 시각 피드백만 변경.
-            속도 조절은 펌웨어 v1.4 표준화 후 도입 예정. */}
+        {/* 중앙: SpeedGauge — 펌웨어 버전 자동 분기.
+            v1.3+: V0~V9 명령으로 PWM 조절.
+            v1.0: 풀파워 고정 (V 명령 무시됨). 시각 피드백만. */}
         <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-          <SpeedGauge onSpeedChange={() => { /* v1.0 호환 — V 명령 안 보냄 */ }}
+          <SpeedGauge
+            onSpeedChange={(v) => {
+              if (isV13Plus(board.lastBoot?.fw)) {
+                void sendByte(`V${v}`);
+              }
+              // v1.0: 무시. 펌웨어 풀파워 그대로.
+            }}
             disabled={!isConnected} colors={C} />
           <div style={{ fontSize: 11, color: '#9E9E9E', textAlign: 'center', marginTop: 4 }}>
-            (현재 보드: 풀파워 고정. 속도 조절은 곧 추가)
+            {!isConnected ? '(보드 연결 후 표시)' :
+             isV13Plus(board.lastBoot?.fw) ? `(보드 FW${board.lastBoot?.fw} — 속도 조절 가능)` :
+             '(원본 펌웨어 — 풀파워 고정)'}
           </div>
         </div>
 

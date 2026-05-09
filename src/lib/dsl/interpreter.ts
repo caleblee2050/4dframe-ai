@@ -14,7 +14,7 @@ import type {
   WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep, PlaySoundStep, PlayTuneStep,
 } from './schema';
 import {
-  MOTORS, SERVOS, GLOBAL, SPEED_BASE_LEVEL, pwmCommand,
+  MOTORS, SERVOS, GLOBAL, SPEED_BASE_LEVEL, pwmCommand, isV13Plus,
 } from '@/lib/commands/commands';
 import { calibratedPwmLevel, useCalibrationStore } from '@/lib/calibration/store';
 import { useBoardStore } from '@/lib/serial/webSerial';
@@ -128,17 +128,23 @@ async function executeStep(step: Step, ctx: StepCtx, path: string): Promise<void
 async function execSpin(step: SpinStep, ctx: StepCtx) {
   const motorCfg = MOTORS[step.motor];
   const dirOverride = useCalibrationStore.getState().current.dirOverride[step.motor];
+  const threshold = useCalibrationStore.getState().current.startThreshold;
 
-  // 학생이 'reverse' 라고 한 의도와 보드 dirOverride 둘 다 반영.
   const forwardByte = motorCfg.forwardByte;
   const reverseByte = motorCfg.reverseByte;
   const directionByte = (step.direction === 'reverse') ? reverseByte : forwardByte;
 
-  // 🚨 펌웨어 v1.0(원본, 학생 보드) 호환 모드:
-  //   - V0~V9 PWM 명령은 v1.0 에 없음. 보내면 펌웨어가 무시하고 'V'/숫자를 알 수 없는 명령으로 처리.
-  //   - 따라서 PWM 명령 안 보내고 펌웨어 기본 globalPwm(=255, 100%)로 풀파워 동작.
-  //   - 이전 작동하는 Python 코드(keyboard_controller.py) 도 V 명령 안 씀 — 동일 패턴.
-  // 추후 펌웨어 v1.4 일괄 표준화 시 V 명령 도입 검토.
+  // 🔀 펌웨어 버전 자동 분기:
+  //   - v1.3+: V0~V9 PWM 명령 지원 → 학생 SpeedLabel 을 보드별 시동 V 보정해서 송신.
+  //   - v1.0 (원본): V 명령 무시됨 → 안 보냄. 펌웨어 기본 globalPwm(=255, 100%)로 풀파워.
+  // 자동 감지: useBoardStore.lastBoot.fw 가 "1.3" 이상이면 v1.3+ 가정.
+  const fw = useBoardStore.getState().lastBoot?.fw;
+  if (isV13Plus(fw)) {
+    const baseLevel = SPEED_BASE_LEVEL[step.speed];
+    const level = calibratedPwmLevel(step.motor, baseLevel, threshold);
+    await ctx.send(pwmCommand(level));
+  }
+
   await ctx.send(directionByte);
 
   if (step.duration_ms !== undefined) {
@@ -152,7 +158,17 @@ async function execSpin(step: SpinStep, ctx: StepCtx) {
 }
 
 async function execDrive(step: DriveStep, ctx: StepCtx) {
-  // 🚨 v1.0 호환 모드 — V 명령 안 보냄. 펌웨어 globalPwm 기본(255)로 풀파워 4WD.
+  const fw = useBoardStore.getState().lastBoot?.fw;
+  if (isV13Plus(fw)) {
+    // v1.3+: 가장 빡빡한 모터(M4) 기준으로 글로벌 PWM 보정
+    const threshold = useCalibrationStore.getState().current.startThreshold;
+    const baseLevel = SPEED_BASE_LEVEL[step.speed];
+    const motors: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
+    const level = motors.reduce((acc, m) => Math.max(acc, calibratedPwmLevel(m, baseLevel, threshold)), 0);
+    await ctx.send(pwmCommand(level));
+  }
+  // v1.0: V 명령 안 보냄. 풀파워.
+
   const headingByte = {
     forward: GLOBAL.carForward,
     backward: GLOBAL.carBackward,
@@ -189,8 +205,15 @@ async function execServo(step: ServoStep, ctx: StepCtx) {
 }
 
 async function execSpeed(step: SpeedStep, ctx: StepCtx) {
-  // 🚨 v1.0 호환 모드 — V 명령 보내지 않음. 인터프리터 로컬 상태만 추적.
   ctx.setSpeed(step.level);
+  const fw = useBoardStore.getState().lastBoot?.fw;
+  if (isV13Plus(fw)) {
+    const threshold = useCalibrationStore.getState().current.startThreshold;
+    const baseLevel = SPEED_BASE_LEVEL[step.level];
+    const level = calibratedPwmLevel('M4', baseLevel, threshold);
+    await ctx.send(pwmCommand(level));
+  }
+  // v1.0: 글로벌 PWM 그대로 (풀파워).
 }
 
 async function execStop(step: StopStep, ctx: StepCtx) {
