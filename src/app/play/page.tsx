@@ -406,7 +406,7 @@ export default function PlayPage() {
   const recognitionRef = useRef<SR | null>(null);
   const [listening, setListening] = useState(false);
 
-  const onMicToggle = useCallback(async () => {
+  const onMicToggle = useCallback(() => {
     if (typeof window === 'undefined') return;
     const win = window as unknown as { SpeechRecognition?: new () => SR; webkitSpeechRecognition?: new () => SR };
     const SRClass = win.SpeechRecognition || win.webkitSpeechRecognition;
@@ -423,16 +423,8 @@ export default function PlayPage() {
       return;
     }
 
-    // 마이크 권한 사전 확인 — getUserMedia 로 명시적 prompt 한 번 통과시킴.
-    // SpeechRecognition 만으로는 일부 환경에서 권한 prompt 가 무음으로 거부될 수 있음.
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((t) => t.stop());   // 즉시 닫음 (SR 가 자체 stream 관리)
-    } catch (e) {
-      console.warn('[mic] getUserMedia 거부:', e);
-      alert('마이크 권한이 차단되어 있어요. 주소창 왼쪽 자물쇠 → 마이크 → 허용으로 바꿔주세요.');
-      return;
-    }
+    // SpeechRecognition 자체가 첫 호출 시 권한 prompt — 별도 getUserMedia 로
+    // stream 미리 잡았다 닫으면 race 발생해서 SR 이 즉시 onend (마이크 빠르게 꺼짐 버그).
 
     const recognition = new SRClass();
     recognition.lang = 'ko-KR';
@@ -508,6 +500,16 @@ export default function PlayPage() {
   const onJoystickMove = useCallback((x: number, y: number, mag: number) => {
     if (!isConnected) return;
     const now = Date.now();
+
+    // 정지 명령 (mag=0) 은 throttle 우회 — 키 떼는 즉시 멈춰야 함
+    if (mag === 0) {
+      const sig = 'STOP';
+      if (lastJoyRef.current.signature === sig) return;
+      lastJoyRef.current = { t: now, signature: sig };
+      void board.send(GLOBAL.stopAll);
+      return;
+    }
+
     if (now - lastJoyRef.current.t < 80) return;   // 80ms throttle
 
     // 화면 좌표 → 차동 조향. y 화면 아래가 양수, 우리는 forward = 위 = y<0.
@@ -520,14 +522,6 @@ export default function PlayPage() {
 
     const fw = board.lastBoot?.fw;
     const v13 = isV13Plus(fw);
-
-    if (mag === 0) {
-      const sig = 'STOP';
-      if (lastJoyRef.current.signature === sig) return;
-      lastJoyRef.current = { t: now, signature: sig };
-      void board.send(GLOBAL.stopAll);
-      return;
-    }
 
     const lLevel = Math.min(9, Math.round(Math.abs(left) * 9));
     const rLevel = Math.min(9, Math.round(Math.abs(right) * 9));
@@ -617,6 +611,28 @@ export default function PlayPage() {
         recognitionRef.current = null;
       }
     };
+  }, []);
+
+  // 어디서든 Enter → textarea focus (조이스틱/일반 div 등에서 엔터 누르면 채팅창으로 이동).
+  // textarea/input/contentEditable/button 안에서는 그쪽 onKeyDown 우선이라 무시.
+  useEffect(() => {
+    const onGlobalEnter = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+      if ((e as KeyboardEvent & { isComposing?: boolean }).isComposing) return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (!ae) return;
+      const tag = ae.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'BUTTON' || ae.isContentEditable) return;
+      // body / div / section 등 일반 요소에서 Enter → textarea focus + 끝 커서
+      e.preventDefault();
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    };
+    window.addEventListener('keydown', onGlobalEnter);
+    return () => window.removeEventListener('keydown', onGlobalEnter);
   }, []);
 
   return (
