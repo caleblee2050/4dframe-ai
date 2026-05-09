@@ -10,9 +10,12 @@ import type { TuneId } from '@/lib/dsl/schema';
 
 // 음 → Hz 매핑 (A4=440 기준)
 const NOTE_HZ: Record<string, number> = {
+  E2: 82.41, F2: 87.31, G2: 98.00,            // 죠스용 저음
+  C3: 130.81, D3: 146.83, E3: 164.81, G3: 196.00,
   C4: 261.63, D4: 293.66, E4: 329.63, F4: 349.23, G4: 392.00,
   A4: 440.00, B4: 493.88,
   C5: 523.25, D5: 587.33, E5: 659.25, F5: 698.46, G5: 783.99, A5: 880.00,
+  C6: 1046.50, E6: 1318.51,                   // 오르골 고음
 };
 
 interface Note {
@@ -77,6 +80,33 @@ const TUNES: Record<TuneId, Note[]> = {
     hz: i % 2 === 0 ? NOTE_HZ.E5 : NOTE_HZ.C5,
     beats: 0.5,
   })),
+
+  // 🎵 오르골 — 반짝반짝 고음 + 태엽 풀어지는 dynamics (시작 빠름 → 점점 느려짐).
+  // beats 점진 증가 = 자연 감속. 마지막 음 길게 늘어짐. 발레리나 회전 속도와 sync 의도.
+  music_box: [
+    { hz: NOTE_HZ.C5, beats: 0.5 }, { hz: NOTE_HZ.C5, beats: 0.5 },
+    { hz: NOTE_HZ.G5, beats: 0.6 }, { hz: NOTE_HZ.G5, beats: 0.6 },
+    { hz: NOTE_HZ.A5, beats: 0.7 }, { hz: NOTE_HZ.A5, beats: 0.7 },
+    { hz: NOTE_HZ.G5, beats: 1.2 },
+    { hz: NOTE_HZ.F5, beats: 0.9 }, { hz: NOTE_HZ.F5, beats: 0.9 },
+    { hz: NOTE_HZ.E5, beats: 1.0 }, { hz: NOTE_HZ.E5, beats: 1.0 },
+    { hz: NOTE_HZ.D5, beats: 1.4 }, { hz: NOTE_HZ.D5, beats: 1.4 },
+    { hz: NOTE_HZ.C5, beats: 2.5 },   // 길게 늘어짐
+    { hz: null, beats: 0.5 },
+    { hz: NOTE_HZ.C5, beats: 4.0 },   // 잔잔한 마지막 한 음 (태엽 다 풀린 상태)
+  ],
+
+  // 🦈 죠스 등장음 — E-F E-F 두 음 점점 빨라짐. 긴장감 점증.
+  // beats 감소 = 점점 빠른 템포 (긴박).
+  jaws: [
+    { hz: NOTE_HZ.E2, beats: 1.5 }, { hz: NOTE_HZ.F2, beats: 1.5 },
+    { hz: NOTE_HZ.E2, beats: 1.2 }, { hz: NOTE_HZ.F2, beats: 1.2 },
+    { hz: NOTE_HZ.E2, beats: 0.9 }, { hz: NOTE_HZ.F2, beats: 0.9 },
+    { hz: NOTE_HZ.E2, beats: 0.6 }, { hz: NOTE_HZ.F2, beats: 0.6 },
+    { hz: NOTE_HZ.E2, beats: 0.4 }, { hz: NOTE_HZ.F2, beats: 0.4 },
+    { hz: NOTE_HZ.E2, beats: 0.3 }, { hz: NOTE_HZ.F2, beats: 0.3 },
+    { hz: NOTE_HZ.E3, beats: 2.0 },   // 폭발음 — 한 옥타브 위 길게
+  ],
 };
 
 let _audioCtx: AudioContext | null = null;
@@ -157,4 +187,6 @@ export const TUNE_LABELS: Record<TuneId, string> = {
   mountain_rabbit: '🐰 산토끼',
   three_bears: '🐻 곰 세 마리',
   beep_pattern: '🎵 띠띠 띠띠띠',
+  music_box: '🎼 오르골',
+  jaws: '🦈 죠스 등장',
 };

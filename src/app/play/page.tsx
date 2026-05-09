@@ -25,6 +25,7 @@ const ARTWORKS: Array<{ id: PromptContext['artwork']; label: string; emoji: stri
   { id: 'car_4wd', label: '자동차', emoji: '🚗' },
   { id: 'swing', label: '회전그네', emoji: '🎠' },
   { id: 'crocodile', label: '악어', emoji: '🐊' },
+  { id: 'ballerina', label: '발레리나', emoji: '🩰' },
 ];
 
 const SAMPLE_PROMPTS = [

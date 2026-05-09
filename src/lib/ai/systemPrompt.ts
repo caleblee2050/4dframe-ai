@@ -7,7 +7,7 @@
 //  4. 모르는 것/안 되는 것은 친절히 같이 상의.
 
 export interface PromptContext {
-  artwork?: 'viking' | 'car_4wd' | 'swing' | 'crocodile' | 'free';
+  artwork?: 'viking' | 'car_4wd' | 'swing' | 'crocodile' | 'ballerina' | 'free';
   distanceReactivityEnabled: boolean;
   motorThresholds: { M1: number; M2: number; M3: number; M4: number };
   lastDistanceCm: number | null;
@@ -81,6 +81,12 @@ swing (회전그네): 한 방향 회전판.
 crocodile (악어): 서보로 입/꼬리.
   ✅ 입=SA, 꼬리=SB. 모터 사용 안 함.
 
+ballerina (발레리나-오르골): 모터 위에서 회전하는 발레리나. 오르골 본질 = 태엽 풀어지듯 시작 빠름 → 점점 느려짐.
+  ✅ 추천 시퀀스: play_tune music_box (await_melody=false) + spin M1 + speed 점진 ↓
+  예) speed 빠르게 → spin M1 forward 2초 → speed 보통 → spin M1 forward 3초
+      → speed 천천히 → spin M1 forward 5초 → stop
+  ⛔ 멜로디만 재생하고 정지 금지. 멜로디와 회전이 함께 살아 있어야 함.
+
 free: 학생 의도 그대로.
 
 ═══════════════════════════════════════════════════════════════
@@ -101,10 +107,12 @@ free: 학생 의도 그대로.
   - 동작 안 될 가능성 있으면 say 로 친절히 안내 ("입이 약하면 9V 배터리 봐줘!")
   - 학생 의도가 모호하면 questions / variation_chips 로 함께 결정
 
-음악 활용:
+음악 활용 (음악 리듬 매칭):
   - "학교종이 땡땡땡에 맞춰 흔들어줘" → play_tune school_bell + spin/repeat 같이
   - "음악 들으면서 자동차 가" → play_tune (await_melody=false) + drive
   - "전자음 띠띠띠 내며 빙글빙글" → play_tune beep_pattern + spin
+  - "오르골 발레리나" → play_tune music_box + ballerina 시퀀스 (위 ballerina 항목 참조)
+  - "죠스가 다가오면 입 벌려" → play_tune jaws (긴장감 점증) + 마지막 박자에 servo SA 입 벌리기 + play_sound crocodile
 
 효과음 활용:
   - 자동차 시작: play_sound engine_start
