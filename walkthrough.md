@@ -1,7 +1,9 @@
 # 4DFrame AI — Walkthrough
 
-> 마지막 업데이트: 2026-05-10 (D-day 새벽)
+> 마지막 업데이트: 2026-05-11 (D-day + 1)
 > **다음 세션 시작 시 이 문서만 읽고 즉시 작업 진입 가능**
+> 페이지 안내: [docs/PAGES.md](docs/PAGES.md)
+> 제품 비전: [docs/VISION.md](docs/VISION.md)
 
 ---
 
@@ -16,11 +18,97 @@ npm run dev                       # 로컬 dev (Mac)
 ```
 
 **라이브 URL**: https://4dframe-ai.vercel.app
-- `/` 마케팅 / `/play` 학생용 / `/play/identify` 사진 인식 / `/play/test` 디버그 / `/admin` 관리자
+- `/` 마케팅
+- **`/play/simple` 학생 메인 (THINK GEN 디자인)** ← 학생/교사에게 알리는 URL
+- `/play` 어른용 고급 모드 (모든 기능)
+- `/play/identify` 사진 인식
+- `/play/test` 디버그
+- `/admin` 관리자
 
 ---
 
-## 1. 5/9~5/10 큰 줄기 (시간순)
+## 1. 5/10 (오후) ~ 5/11 큰 줄기 — 단순 모드 + 다국어 + AI 작곡
+
+### A. 학생용 단순 모드 (/play/simple) 신설
+- 별도 라우트로 분리 — `/play` 는 어른용, `/play/simple` 은 학생용 (디자인 이미지 매칭).
+- 좌측 사이드바: THINK GEN 로고 + 나만의 AI 스킬 (1/2/3 칩, 작품별 자동) + AI 기본 스킬 (입 벌리기/다물기 ±15°).
+- 우측 메인: 프로젝트 검색바 + 컨트롤 보드 ON/OFF + 큰 입력 박스 + 캐릭터 + 메시지.
+- 입력 박스 우측 하단 마이크 🎤 (입력 박스와 통합) / mount 시 textarea autofocus.
+- 캐릭터 박스 우측 하단: 입 아이콘 (설정 ⚙️) + 눈 아이콘 (거리 반응 + cm + ON/OFF 배지) — 직관적 라벨.
+- 우측 상단 헤더: 프로젝트 드롭다운 / 🖐 손동작 토글 / 언어 토글 (큰 원형 44px 🇰🇷🇺🇸🇲🇳) / 컨트롤 보드 ON/OFF.
+
+### B. 다국어 — 한국어 / English / Монгол
+- `src/lib/i18n/dict.ts` — 60+ 키 사전 (UI 라벨, 스킬 이름, 설정 메뉴, 카메라 메시지)
+- `src/lib/i18n/store.ts` — zustand persist (`4dframe-i18n`, locale + simpleMode)
+- TTS voice 분기: `Kore` (한) / `Puck` (영) / `Puck` (몽골 — voice 미지원이라 영어 fallback)
+- TTS cache 키에 `locale:text` prefix
+- systemPrompt 가 locale 받아 응답 언어 가이드 출력 (en/mn 모드 → say/intro/chips 모두 해당 언어)
+- 6개 built-in 스킬 라벨 + intro/outro say 텍스트 모두 한/영/몽 번역
+
+### C. AI 즉석 작곡 — `tune: 'custom'`
+- DSL 확장: `PlayTuneStep.custom?: { notes: [{pitch, beats}], timbre? }`
+- pitch 'C3'~'A5' / 'rest' / beats 0.1~8 / timbre square·triangle·sine
+- melodySynth: `pitchToHz` + `customToNotes` + tune='custom' 분기 (timbre 별 음색)
+- `melodyDurationMs(tune, tempo, custom?)` — sync 길이 정확 측정
+- systemPrompt: 분위기 묘사 → AI 즉석 작곡 가이드 + 예시 3개 (긴장 sine / 행진 square / 심장박동 sine 반복)
+- 핵심 원칙: 부정확해도 OK — "맞춰 나가는 과정" 자체가 사고력 훈련
+
+### D. 음악-동작 정확 sync (executor 패턴)
+- `viking_school_bell` executor 화 — 학교종 + M1+M3 흔들기 동시 시작/종료
+- `crocodile_jaws` 신규 — 죠스 음악 80% 까지 입 미세 떨림, 마지막 20% 클라이맥스 입 크게 + crocodile 효과음
+- `ballerina_musicbox` — V9 → V2 linear 감속, 음악 끝 = 모터 정지 (이미 있던 것 + 다국어 say)
+- `SkillExecutor` 인터페이스에 `t(key)` 추가 — executor 안에서 다국어 say
+- `playMelody(tune, tempo, muted, custom?)` 시그니처 + Promise<void> 반환
+
+### E. 새 동요 + 카탈로그 확장
+- ✈️ `airplane` (떴다떴다 비행기) 추가 — Mary Had a Little Lamb 멜로디
+- 카탈로그 9개: school_bell / twinkle / butterfly / mountain_rabbit / three_bears / airplane / beep_pattern / music_box / jaws
+- 미지원 노래 ("아기상어" 등) 시 systemPrompt fallback 가이드 — custom 으로 즉석 작곡 또는 비슷한 preset 안내
+
+### F. 마이크 STT 전면 교체 (Web Speech API → MediaRecorder)
+- 환경 의존성 (특정 PC onspeechstart 미호출) 우회
+- `/api/stt` (Vercel AI Gateway → google/gemini-2.5-flash multimodal audio)
+- VAD 침묵 자동 종료 (1.5초) + 명확한 진단 (권한/장치/짧음/들리는말없음)
+- 단발 토글 — 명령줄에서 클릭 시 녹음, 침묵 자동 종료, 결과 input 누적
+- 대화모드 일시 시도 후 제거 (자동 흐름 검증 부족)
+
+### G. UI 큰 단계
+- 도구 바 / 작품 카드 분리 (advanced 페이지)
+- 거리 반응 토글을 헤더 위젯 (advanced) + 캐릭터 박스 우측 하단 (simple)
+- 자동차 작품 시 조이스틱 자동 노출 (mag 위치값 기반 V level + 키보드 화살표 mag=0.55)
+- 카메라 제스처 토글 버튼 (🖐) — 헤더에서 ON/OFF
+- 악어 작품 카메라 단순 분기 — 손 펼침(openness>=0.6) = 입 벌림 (`%`) / 주먹(<=0.3) = 입 다묾 (`5`)
+
+### H. 손가락 인식 정확도 — 3D 관절 각도
+- MediaPipe 의 z 좌표 포함한 dot product (`MCP→PIP` 와 `PIP→TIP` cos > 0.5)
+- 엄지는 별도 — `tip` 과 검지 MCP 거리 비교 (회전축 다름)
+- 진단 칩에 마스크 표시 (👍 ☝️ 🖕 💍 🤙)
+
+### I. 펌웨어 v1.3.4 ~ v1.3.5 — BLE baud auto-changer
+- v1.3.4: 부팅 시 EEPROM 플래그 검사 → JDY-23 default 9600 → AT+BAUD8 (115200) 영구 변경 → EEPROM 플래그 set
+- v1.3.5: 응답 검출 강화 (1+ byte = OK), 1.5초 BLE init wait, 부팅 메시지에 `BLE:9600->115200` 진단 출력
+- stk500_flash.py 8라운드 retry 추가 (sync window 부팅 직후 짧은 USB-C 클론 보드 대비)
+- **결론**: 보드 J6 슬롯이 ATmega328 hardware UART 와 회로상 연결되지 않음 (`BLE:noresponse`) — BLE 통신 불가. UI 에서 BLE 버튼 숨김.
+
+### J. 손그림 → 폭파도 / 자유 입력 JSON 보호
+- 빈 응답 (`cleaned === ''`) → 명확한 에러 메시지
+- JSON.parse 실패 → 원인 message 포함 에러
+- history 누적 cap (서버 전송 8턴, 메모리 16엔트리)
+
+### K. customSkills 연동 (advanced ↔ simple)
+- simple 모드도 customSkills 자동 표시 (작품별 필터, 최대 3개 슬롯)
+- advanced 에서 💾 저장 → simple 에 즉시 반영, ✕ 삭제 → simple 도 동시 사라짐
+- localStorage origin 별 분리는 환경 차이 (localhost ↔ vercel.app) — 같은 환경 안에서는 자동 동기화
+
+### L. 부모용 ⚙️ 설정 모달 (simple 페이지 안)
+- 거리 반응 모드 토글 (체크박스)
+- 모터 길들이기 (M1~M4 시동 V ±1, 정/역, ▶ 시동 테스트)
+- 서보 각도 (SA/SB ±15°, 90° 중앙)
+- 모든 라벨 다국어
+
+---
+
+## 2. 5/9~5/10 큰 줄기 (시간순)
 
 ### A. 펌웨어 회귀 사슬 fix
 - **v1.3.3** (`a46626f`): `Servo::detach()` 가 timer1 모드(CTC) 복원 안 해서 D9/D10 PWM 죽던 v1.3.2 회귀 → `resetTimer1ForPwm()` 명시 호출 추가. detach 후 TCCR1A=Phase Correct PWM, TCCR1B=prescaler 64 강제 reset.
