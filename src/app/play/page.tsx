@@ -956,36 +956,15 @@ export default function PlayPage() {
             </button>
           )}
           {!isConnected ? (
-            <div style={{ display: 'flex', gap: 6 }}>
-              <button
-                onClick={() => board.connect()}
-                title="USB 케이블로 연결 (PC/노트북)"
-                style={{ ...btn(palette.tertiary, '#fff'), padding: '8px 12px', fontSize: 13 }}
-                disabled={board.status === 'requesting' || board.status === 'opening'}
-              >
-                {board.status === 'requesting' ? '선택 중…' :
-                 board.status === 'opening' ? '연결 중…' : '🔌 USB'}
-              </button>
-              <button
-                onClick={() => void board.connectBle(false)}
-                title={
-                  'BLE 모듈만 좁혀서 검색 (JDY-23/HM-10/BT05/MLT-BT05).\n' +
-                  '다이얼로그가 비어 있으면 → 옆의 "📶 모두" 버튼으로 모든 장치 검색.'
-                }
-                style={{ ...btn(palette.accent, palette.textMain), padding: '8px 12px', fontSize: 13 }}
-                disabled={board.status === 'requesting' || board.status === 'opening'}
-              >
-                📶 블루투스
-              </button>
-              <button
-                onClick={() => void board.connectBle(true)}
-                title="모든 BLE 장치 검색 (좁힌 필터에 안 잡힐 때 백업)"
-                style={{ ...btn(palette.tilePink, palette.textMain), padding: '8px 8px', fontSize: 11 }}
-                disabled={board.status === 'requesting' || board.status === 'opening'}
-              >
-                모두
-              </button>
-            </div>
+            <button
+              onClick={() => board.connect()}
+              title="USB 케이블로 연결"
+              style={btn(palette.tertiary, '#fff')}
+              disabled={board.status === 'requesting' || board.status === 'opening'}
+            >
+              {board.status === 'requesting' ? '포트 선택 중…' :
+               board.status === 'opening' ? '연결 중…' : '🔌 보드 연결'}
+            </button>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 11, color: palette.textMuted }}>
@@ -994,6 +973,16 @@ export default function PlayPage() {
               <button onClick={() => board.disconnect()} style={{ ...btn(palette.primary, '#fff'), padding: '6px 10px', fontSize: 12 }}>끊기</button>
             </div>
           )}
+          <Link
+            href="/play/simple"
+            title="단순 모드로 돌아가기"
+            style={{
+              ...btn(palette.tilePink, palette.textMain),
+              padding: '6px 12px', fontSize: 12, textDecoration: 'none',
+            }}
+          >
+            🌟 쉬운 모드
+          </Link>
           <button
             onClick={() => setSettingsOpen(true)}
             title="설정 (모터 길들이기 / 거리 반응)"
