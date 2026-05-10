@@ -193,8 +193,27 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
 
       // 진단 명령 자동 발사 (BOOT 못 받았을 때 ID/FW 채우기)
       setTimeout(() => {
-        void bleSend('?').catch(() => {});
+        void bleSend('?').catch((err) => {
+          console.warn('[ble→?] 송신 실패', err);
+          useBoardStore.setState({ errorMessage: `BLE 송신 실패: ${err?.message ?? err}` });
+        });
       }, 500);
+
+      // 2초 후에도 보드 응답 없으면 baud rate 의심 자동 안내
+      setTimeout(() => {
+        const s = useBoardStore.getState();
+        if (s.status === 'connected' && !s.lastBoot && !s.lastDistanceCm) {
+          useBoardStore.setState({
+            errorMessage:
+              '⚠️ BLE 연결은 됐지만 보드 응답이 없어요. 가장 흔한 원인:\n\n' +
+              '1️⃣ 9V 배터리 — 모터는 9V 외부 전원이 필요해요. USB 만으로는 모터가 안 돕니다.\n\n' +
+              '2️⃣ BLE 모듈 baud rate — JDY-23 의 default 는 9600 인데 보드 펌웨어는 115200 사용. ' +
+              '한 번만 USB 로 보드 연결 → 시리얼 모니터에서 "AT+BAUD9" 보내 BLE 모듈을 115200 으로 영구 설정 필요. ' +
+              '(설정 후 보드 재부팅하면 끝)\n\n' +
+              '3️⃣ BLE 모듈이 보드 hardware UART (D0/D1) 에 안 연결되어 있을 가능성도 있어요.',
+          });
+        }
+      }, 2000);
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
       let msg = raw;
@@ -238,11 +257,21 @@ async function bleSend(payload: string): Promise<void> {
   if (!_bleChar) throw new Error('BLE 미연결');
   const bytes = encoder.encode(payload);
   const CHUNK = 20;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    const chunk = bytes.slice(i, i + CHUNK);
-    // writeValueWithoutResponse 가 빠르지만 일부 모듈에서 backpressure 손실. writeValue 가 안전.
-    await _bleChar.writeValue(chunk);
-    if (i + CHUNK < bytes.length) await new Promise((r) => setTimeout(r, 5));
+  try {
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      const chunk = bytes.slice(i, i + CHUNK);
+      // writeValueWithoutResponse 가 빠르지만 일부 모듈에서 backpressure 손실. writeValue 가 안전.
+      await _bleChar.writeValue(chunk);
+      if (i + CHUNK < bytes.length) await new Promise((r) => setTimeout(r, 5));
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[ble→ "${payload}"] writeValue 실패:`, msg);
+    // 사용자가 모바일이라 console 확인 어려움 — UI 에 표시
+    useBoardStore.setState({
+      errorMessage: `BLE 명령 전송 실패: ${msg}\n\n👉 BLE 모듈이 write 권한 없음 / 연결 끊어짐 / characteristic 호환 X 가능성.`,
+    });
+    throw e;
   }
 }
 
