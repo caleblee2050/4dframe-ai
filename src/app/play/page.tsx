@@ -150,8 +150,8 @@ function describeStep(step: Step): string {
     case 'play_tune': {
       const tuneMap: Record<string, string> = {
         school_bell: '학교종', twinkle: '반짝반짝', butterfly: '나비야',
-        mountain_rabbit: '산토끼', three_bears: '곰세마리', beep_pattern: '띠띠띠',
-        music_box: '오르골', jaws: '죠스 등장음',
+        mountain_rabbit: '산토끼', three_bears: '곰세마리', airplane: '비행기',
+        beep_pattern: '띠띠띠', music_box: '오르골', jaws: '죠스 등장음',
       };
       return `🎵 ${tuneMap[step.tune] ?? step.tune}`;
     }

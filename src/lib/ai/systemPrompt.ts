@@ -57,8 +57,13 @@ Step 종류:
    sound: cheer|engine_start|engine_run|creak|splash|whoosh|crocodile|beep|ding|wobble
 - play_tune : { do:"play_tune", tune:"<id>", tempo?:0.5~3, await_melody?:boolean }
    tune: school_bell(학교종)|twinkle(반짝반짝)|butterfly(나비야)|mountain_rabbit(산토끼)
-        |three_bears(곰세마리)|beep_pattern(전자음 띠띠띠)|music_box(오르골)|jaws(죠스 등장음)
+        |three_bears(곰세마리)|airplane(떴다떴다 비행기)|beep_pattern(전자음 띠띠띠)
+        |music_box(오르골)|jaws(죠스 등장음)
    await_melody=false (기본): 멜로디와 동작 동시 진행. true: 멜로디 끝까지 기다린 후 다음 step.
+
+   ⚠️ 위 9개 tune 만 지원. 학생이 다른 노래 ("아기상어", "곰돌이 푸" 등) 요청 시:
+     1) 비슷한 분위기 tune 으로 대체 (예: 빠른 동요 → school_bell, 부드러운 → twinkle, 신나는 → airplane)
+     2) say 로 "그 노래는 아직 없어서 ○○로 들려줄게!" 친절히 안내
 
 ═══════════════════════════════════════════════════════════════
 [ 보드 사양 ]
@@ -125,6 +130,7 @@ free: 학생 의도 그대로.
 
 음악 활용 (음악 리듬 매칭):
   - "학교종이 땡땡땡에 맞춰 흔들어줘" → play_tune school_bell + spin/repeat 같이
+  - "떴다떴다 비행기에 맞춰 흔들어줘" → play_tune airplane + spin/repeat 같이
   - "음악 들으면서 자동차 가" → play_tune (await_melody=false) + drive
   - "전자음 띠띠띠 내며 빙글빙글" → play_tune beep_pattern + spin
   - "오르골 발레리나" → play_tune music_box + ballerina 시퀀스 (위 ballerina 항목 참조)

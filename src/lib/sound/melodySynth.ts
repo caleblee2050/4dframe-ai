@@ -75,6 +75,18 @@ const TUNES: Record<TuneId, Note[]> = {
     { hz: NOTE_HZ.F4, beats: 1 }, { hz: NOTE_HZ.F4, beats: 1 }, { hz: NOTE_HZ.E4, beats: 2 },
   ],
 
+  // 떴다떴다 비행기 — Mary Had a Little Lamb (한국 번안). 미레도레 미미미 / 레레레 / 미솔솔 / ...
+  airplane: [
+    { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.D4, beats: 1 }, { hz: NOTE_HZ.C4, beats: 1 }, { hz: NOTE_HZ.D4, beats: 1 },
+    { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.E4, beats: 2 },
+    { hz: NOTE_HZ.D4, beats: 1 }, { hz: NOTE_HZ.D4, beats: 1 }, { hz: NOTE_HZ.D4, beats: 2 },
+    { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.G4, beats: 1 }, { hz: NOTE_HZ.G4, beats: 2 },
+    { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.D4, beats: 1 }, { hz: NOTE_HZ.C4, beats: 1 }, { hz: NOTE_HZ.D4, beats: 1 },
+    { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.E4, beats: 1 },
+    { hz: NOTE_HZ.D4, beats: 1 }, { hz: NOTE_HZ.D4, beats: 1 }, { hz: NOTE_HZ.E4, beats: 1 }, { hz: NOTE_HZ.D4, beats: 1 },
+    { hz: NOTE_HZ.C4, beats: 4 },
+  ],
+
   // 단순 전자음 패턴 — 띠띠띠띠 (8회)
   beep_pattern: Array.from({ length: 8 }, (_, i) => ({
     hz: i % 2 === 0 ? NOTE_HZ.E5 : NOTE_HZ.C5,
@@ -207,6 +219,7 @@ export const TUNE_LABELS: Record<TuneId, string> = {
   butterfly: '🦋 나비야',
   mountain_rabbit: '🐰 산토끼',
   three_bears: '🐻 곰 세 마리',
+  airplane: '✈️ 떴다떴다 비행기',
   beep_pattern: '🎵 띠띠 띠띠띠',
   music_box: '🎼 오르골',
   jaws: '🦈 죠스 등장',

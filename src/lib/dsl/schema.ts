@@ -129,6 +129,7 @@ export type TuneId =
   | 'butterfly'      // 나비야
   | 'mountain_rabbit' // 산토끼
   | 'three_bears'    // 곰 세 마리
+  | 'airplane'       // 떴다떴다 비행기
   | 'beep_pattern'   // 단순 띠띠띠 패턴 (전자음)
   | 'music_box'      // 오르골 (반짝반짝 멜로디 + 태엽 풀어짐 dynamics — 빨라졌다 느려짐)
   | 'jaws';          // 죠스 등장음 — 빠~ㅂ밤.. 빠~ㅂ밤.. (긴장감 점증)
