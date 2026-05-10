@@ -1,7 +1,7 @@
 # 4DFrame AI — Walkthrough
 
-> 마지막 업데이트: 2026-05-09 저녁 (D-1, 5/10 데모 전날)
-> 다음 세션 시작 시 **이 문서만 읽고 즉시 작업 진입 가능**
+> 마지막 업데이트: 2026-05-10 (D-day 새벽)
+> **다음 세션 시작 시 이 문서만 읽고 즉시 작업 진입 가능**
 
 ---
 
@@ -11,49 +11,81 @@
 cd /Users/caleb/dev/4dframe-ai
 git status
 git log --oneline -10
-vercel env pull .env.local   # OIDC 토큰 12시간마다 만료 — 항상 첫 작업
-npm run dev                   # 로컬 dev (Mac에서 권장 환경)
+vercel env pull .env.local       # OIDC 토큰 12시간 만료 — 항상 첫 작업
+npm run dev                       # 로컬 dev (Mac)
 ```
 
 **라이브 URL**: https://4dframe-ai.vercel.app
-- `/` 마케팅 / `/play` 학생용 / `/play/test` 디버그 / `/admin` 관리자
+- `/` 마케팅 / `/play` 학생용 / `/play/identify` 사진 인식 / `/play/test` 디버그 / `/admin` 관리자
 
 ---
 
-## 1. 오늘 (5/9) 완료한 것 — 핵심
+## 1. 5/9~5/10 큰 줄기 (시간순)
 
-### A. 회귀 + 펌웨어 fix
-사용자 보고: 동일 노트북에서 이전 Python 모두 동작, 우리 PWA만 일부 안 동작.
+### A. 펌웨어 회귀 사슬 fix
+- **v1.3.3** (`a46626f`): `Servo::detach()` 가 timer1 모드(CTC) 복원 안 해서 D9/D10 PWM 죽던 v1.3.2 회귀 → `resetTimer1ForPwm()` 명시 호출 추가. detach 후 TCCR1A=Phase Correct PWM, TCCR1B=prescaler 64 강제 reset.
+- **stk500_flash.py 4세대** (`7b57c25`): sync 잔여 응답 정리 + 시그니처 우회 + 5회 제한 + 첫 페이지 read-back verify + drain 단축. 보드 펌웨어가 Optiboot 변종이라 sync 후 timer 계속 가는 환경에 맞춤.
+- 결과: M1~M4 V Sweep 4단계 (V3/V5/V7/V9) 모두 청각 차이 명확.
 
-**원인 분석 (정밀)**:
-1. PWA 가 V/X 명령 송신 — Python 어휘 (1234/!@#$/W/A/S/D/5/%/6/^/0) 와 다름
-2. 서보 명령 간격 80ms — SG90 응답 시간 (~150ms) 보다 짧음 → stall
-3. **펌웨어 v1.3 의 결정적 회귀**: Servo 라이브러리가 timer1 영구 점유 → D9 (M3 PWM), D10 (M4 PWM) `analogWrite` 무력화
-   - val ≥ 128 → digitalWrite(HIGH) 풀파워
-   - val < 128 → digitalWrite(LOW) 정지
-   - 결과: M3 풀파워 고정, M4 V9 에서만 시동
+### B. 자연어 모드 speed 단계차 fix
+- `calibratedPwmLevel` floor 클램프 → 학생 "천천히=V5" 가 V9 로 끌려가던 문제. **`speedToLevel(label, threshold)`** 시동 V 균등 배분으로 교체.
+- localStorage 의 v1.3.2 진단 시기 비정상 시동 V (V8/V9) 잔존 → **zustand persist version 1→2 + migrate 강제 reset**.
+- 결과: 자연어 "천천히/보통/빠르게" 가 V3/V6/V9 (PWM 84/168/255) 로 명확.
 
-**수정 (커밋)**:
-- `e0ce3c3` — V/X 제거 + 서보 delay 200ms (PWA, v1.0 호환 모드)
-- `8cc81c8` — `isV13Plus(fw)` 펌웨어 자동 감지 → v1.3+ 면 V 명령 사용
-- ThinkGen_Framework `1a068e5` — **펌웨어 v1.3.2** (servo 동적 attach/detach + V/X 명령 시 강제 detach)
-- `815fda5` — /play/test 에 FW 큰 뱃지 + V Sweep 비교 도구
+### C. 디자인 5/8 시점 롤백
+- 사용자 결정: 5/9 D-1 대전환 디자인 폐기, 짝코더 톤 (hint/learning_points) 시점으로 복귀.
+- `/play/page.tsx` 를 `65ef24f^` 시점으로 복원, ServoGauge/SpeedGauge 자동 제거.
+- play_tune step (5/9 추가) 호환을 위해 stepIcon/describeStep 보강.
 
-### B. 학생 페이지 D-1 대전환 (사용자 회의 결과 5/9)
-- 코딩 개념 설명 제거 (유치원~초등 친화)
-- 가로 레이아웃 (좌-서보×2 / 중-속도 / 우-조이스틱) — `haqizza/mechatronics_controller` Flutter 코드 충실 반영
-- 4DFrame-Android 디자인 자산 (`logo3`, Dongle 폰트, 오렌지 톤) `/public/fdland/` 에 다운
-- 수동 조종 (Joystick, SpeedGauge, ServoGauge 컴포넌트)
-- 동요 전자음 (Web Audio API 사인파 6곡: 학교종/반짝반짝/나비야/산토끼/곰세마리/띠띠띠)
-- 카메라 인터랙티브 (MediaPipe Hands → 서보 SA)
-- AI 자연어 + 음악 + 카메라 통합
+### D. 직접 컨트롤 시스템
+- **🕹 조이스틱**: 차동 조향 (좌=M1+M3, 우=M2+M4). 80ms throttle.
+  - 키보드 화살표 지원. textarea/input focus 시 무시. 떼면 즉시 정지 (mag=0 throttle 우회).
+  - 작품 무관 토글 ON/OFF.
+  - V level = `round(mag × 9)` (조이스틱 거리 비례 — 조금 밀면 V3, 끝까지 V9 직관).
+- **🖐 손 동작 인식** (MediaPipe HandLandmarker):
+  - **손가락 개수 0~5 인식** (`countFingers`: tip-mcp 거리 비교).
+  - 6 슬롯 매핑 (`finger_0` ~ `finger_5`). 기본 매핑: 0=정지 / 1=천천히 / 2=보통 / 3=빠르게 / 4=뒤로 / 5=입 벌리기.
+  - 매핑 UI 기본 접힘. "⚙️ 고급 — 매핑 바꾸기" 펼침.
+  - 동작 카탈로그 12개 (전후좌우 / 속도 3단 / servo SA SB / noop).
+  - **Lm 타입**: MediaPipe Tasks Vision 의 객체 형태 ({x,y,z}). 옛 array indexing 으로 NaN 나던 버그 fix.
 
-### C. 디버그 보드 (`/play/test`) 강화
-- 모터 캘리브 (시동 V ±, ▶ 시동, 방향 토글)
-- 서보 캘리브 (단계 ×N, 풀 가동 검증 90→0→180→90)
-- 자동 스크롤 페이지 끌어내림 버그 fix
-- **FW 큰 뱃지** (헤더 우측, v1.3.2+ 초록 / 그 외 주황)
-- **V Sweep 비교** (한 모터 V3→V5→V7→V9 1초씩, PWM 차이 자동 검증)
+### E. 4 기본 모델 스킬화
+- `src/lib/skills/library.ts` (6 스킬):
+  - `viking_swing` / `viking_school_bell` / `car_explore` / `crocodile_chomp` / `ballerina_musicbox` / `swing_round`
+  - 각 스킬에 variation_chips + 마지막 say (제안 톤).
+- 작품 선택 카드 안 칩 → 클릭 시 즉시 실행 (AI 안 거침).
+- **executor 인터페이스** (`Skill.execute`): 음악-동작 정교 sync 가 필요한 스킬용.
+  - `ballerina_musicbox` = `playMelody` + `W` 한 번 시동 + 250ms 마다 V9→V2 linear 보간.
+  - 음악 16.5초 동안 끊김 없이 연속 감속 (이전 step 시퀀스로 stopAll 끊기던 문제 해결).
+
+### F. 음악 시스템
+- 동요 6곡 (school_bell/twinkle/butterfly/mountain_rabbit/three_bears/beep_pattern)
+- **music_box** (오르골): C4~C5 옥타브 + triangle wave + release 0.18s (chime ring out) + beats 점진 증가 (태엽 풀림 dynamics)
+- **jaws** (죠스 등장음): E2/F2 sine wave + beats 점진 감소 (긴장감 점증)
+- **결정적 fix**: page.tsx onEvent 핸들러에 `play_tune` case 누락 → 모든 멜로디 무시되던 버그. import + handler 추가 (`1c81924`).
+
+### G. 사진 인식 → 작품 자동 파악
+- **별도 페이지** `/play/identify`:
+  - `CameraCapture` 컴포넌트 — `getUserMedia` + 1024px 리사이즈 + JPEG 0.85
+  - PC 웹캠 (facingMode='user') 자동 미러 (`scaleX(-1)`)
+  - 다각도 사진 누적 → 사진별 분석 + 종합 confidence → "이걸로 놀러갈래" `/play?artwork=xxx`
+- **`/api/identify-artwork`**: claude-sonnet-4-6 vision (Vercel AI Gateway).
+  - 응답: `{ artwork, confidence, greeting, reasoning, ideas[] }`
+
+### H. UX 개선 (단순함 우선)
+- ⚙️ **설정 모달**: 모터 길들이기 + 거리 반응 토글 = 어른용. 메인은 단순.
+- 헤더 우측 **거리센서 미니 위젯** (👀 30 cm).
+- 입력란 **🎤 음성 + 엔터 실행** (Shift+Enter = 줄바꿈, IME 한글 조합 안전).
+- **Global Enter**: 어디서든 Enter → textarea focus + 끝 커서 (button/input/contentEditable 외).
+- **응답 영역 단순화**: "💬 짝코더 메시지" 별도 영역 삭제. 시작 한마디 + 마지막 멘트 + "▼ 실행 과정 보기" 토글 (기본 닫힘).
+- **후속 제안 흐름**: 동작 종료 후 핑크 카드 + scrollIntoView + variation_chips 큰 칩. 클릭 = setInput + textarea focus (자동 전송 X — 학생이 추가 주문 작성).
+- **💾 커스텀 스킬 저장**: `customSkillsStore` (zustand persist). "💖 내 스킬" 라인 + ✕ 삭제. 향후 로그인 시 서버 동기화 진입점.
+
+### I. systemPrompt 톤 전환
+- 코딩 용어 (코드/프로그램/스크립트/명령어/구문/repeat/loop/if) 명시 금지
+- "🌟 후속 제안 (variation_chips) — 항상 2~4개" 명시 + 좋은/나쁜 예
+- 학생 흐름 ("칩 → 입력창 채워짐 → 추가 주문 → 풍부한 상상") 가이드
+- ballerina + music_box + jaws 가이드 추가
 
 ---
 
@@ -61,242 +93,113 @@ npm run dev                   # 로컬 dev (Mac에서 권장 환경)
 
 | 버전 | 위치 | 상태 |
 |---|---|---|
-| **v1.0** | ThinkGen_Framework `b62f3c0` | 4D Frame 본사 원본. 학생 키트 보드 기본값 가정 |
-| v1.3 | ThinkGen_Framework `469c5f6` | M2/M3 핀 스왑, V/X/F/? 추가. **timer1 회귀 발견** |
-| ~~v1.3.2~~ | ThinkGen_Framework `1a068e5` | servo 동적 detach 시도. **timer1 모드 reset 빠져 무효** |
-| **v1.3.3** | ThinkGen_Framework `a46626f` | detach 후 TCCR1A/B 명시 reset → D9/D10 PWM 회복. **5/9 저녁 플래시 + Verify OK 완료** |
+| v1.0 | ThinkGen_Framework `b62f3c0` | 4D Frame 본사 원본 |
+| ~~v1.3~~ | `469c5f6` | M2/M3 핀 스왑 + V/X/F/? — timer1 회귀 |
+| ~~v1.3.2~~ | `1a068e5` | servo detach 시도. timer1 모드 reset 빠져 무효 |
+| **v1.3.3** | `a46626f` | TCCR1A/B 명시 reset. **사용자 보드 플래시 + Verify OK** |
 
-### 펌웨어 어휘 호환성
-
-| 어휘 | v1.0 | v1.3.2 | PWA 송신 |
-|---|---|---|---|
-| W/A/S/D, 1234/!@#$, 5/%/6/^, 0 | ✅ | ✅ | 항상 |
-| **V0~V9** | ❌ | ✅ | `isV13Plus(fw)` 자동 분기 |
-| X{idx}{duty}, F1~F4, ?, * | ❌ | ✅ | /play/test 디버그만 |
-
-학생 키트 양산 = v1.3.2 일괄 플래시 권장. 펌웨어 자동 플래시 옵션 (Web Serial STK500v1) v1.1 작업으로 미룸.
-
----
-
-## 3. 미해결 / 검증 필요
-
-### ✅ 펌웨어 v1.3.2 → v1.3.3 회귀 fix + 플래시 + V Sweep 검증 완료 (5/9 저녁)
-
-#### 사용자 직접 테스트 결과 (Mac + PC 둘 다, v1.3.2 펌웨어)
-- **M3 (D9), M4 (D10)**: V0~V8 무반응, **V9(최고 속도)만 동작** ← 핵심
-- M1 (D6), M2 (D5): 정상 (timer0 사용 → servo 영향 없음)
-- 서보: PC ✅ / Mac ❌ (Mac USB-C 5V 토크 부족, 별개 이슈)
-- 9V 배터리 연결해도 모터 증상 동일 → 전류 가설 폐기
-
-#### 진단 (ThinkGen_Framework `a46626f` 분석 + 코드 검증)
-- Arduino `Servo::detach()` 의 `finISR()` 는 `TIMSK1` OCIE1A 만 끔
-- `TCCR1A`/`TCCR1B` 는 attach 시 `initISR` 가 set 한 **CTC 모드**
-  (WGM12=1, prescaler 8) 그대로 남음
-- 이 상태의 `analogWrite(D9/D10)` 는 OCR1A/B 만 쓰지만 모드가 PWM 이
-  아니라 출력 파형이 안 나감 → val=255 만 `digitalWrite(HIGH)` fallback
-  → "최고속도만 작동" 증상과 정확히 매치
-- v1.3.2 의 detach 패치는 **timer1 모드 자체는 복원하지 않아 무효**
-
-#### v1.3.3 fix (커밋: ThinkGen_Framework `a46626f`)
-- `resetTimer1ForPwm()` 추가:
-  - `TCCR1A = _BV(WGM10)` → Phase Correct PWM 8-bit
-  - `TCCR1B = _BV(CS11) | _BV(CS10)` → prescaler 64 (~490Hz, Arduino 기본)
-  - `TIMSK1 = 0` → Servo 인터럽트 해제
-- detach 후 항상 호출 (V/X 명령 진입, setup 초기화, loop 자동 1.5s detach)
-- 컴파일 검증: 7234 bytes / 30720 (23%), 정상
-
-#### 펌웨어 v1.3.3 플래시 — 완료 (5/9 저녁)
-```
-✅ Sync OK on attempt 2
-[3/5] Enter prog mode
-[4/5] 펌웨어 쓰기 (57/57 페이지)
-[5/5] Verify OK — 첫 페이지 128 byte 일치
-🎉 BOOT:Ami5_V01:FW1.3.3
-```
-
-#### stk500_flash.py 강화 이력 (5/9 저녁, 4세대 fix)
-이 보드의 부트로더는 **sync 받아도 1초 timer 가 계속 가는 변종** (Optiboot 표준은 sync 후 무한 대기). 이 사실 모르고 구현하면 progress bar 가 다 가도 실제 보드는 미변경 상태로 남는 가짜 매치가 발생. 4번 디버깅 끝에 다음 셋이 모두 필요:
-1. `7639e4a` — sync 잔여 응답 정리 + 시그니처 try/except
-2. `098d5c4` — 시그니처 단계 완전 제거 (윈도우 절약)
-3. `f8c56bc` — sync 5회 제한 + drain 함수 + **첫 페이지 read-back verify** (가짜 매치 안전망)
-4. `7b57c25` — drain 0.3s → 0.05s + 짝맞춤 sync (윈도우 까먹기 방지)
-
-핵심 학습: Verify (CMD_READ_PAGE) 가 가짜 매치 진단의 결정적 단서. 없으면 progress bar 만 보고 성공 오인.
-
-#### PC 검증 결과 (5/9 저녁)
-- ✅ FW 뱃지 `1.3.3 ✓ 최신`
-- ✅ V Sweep — M2/M3/M4 모두 V3/V5/V7/V9 단계차 명확 (청각 + 시각)
-- ✅ 서보 SA/SB 풀 가동 — 부드럽게 동작
-- ❌ `/play` 자연어 모드 — speed 차이 안 들림 (별개 이슈, 아래 참조)
-
-### ✅ 자연어 모드 speed 단계차 fix 완료 (5/9 저녁, 사용자 검증 완료)
-**결과**: 3단계 속도차이가 모든 모터에서 정확히 들림 (M1~M4 + 자연어 + V Sweep 동치).
-사용자 보고: 자연어로 "천천히→점점 빠르게→천천히→정지" 명시했는데 단계차 미체감.
-모터 1~4 모두 동일 증상.
-
-#### 원인
-`calibration/store.ts:calibratedPwmLevel` 의 floor 클램프:
-```ts
-return Math.min(9, Math.max(baseLevel, threshold[motor] + 1));
-```
-v1.3.2 회귀 진단 때 사용자가 캘리브레이션 카드에서 시동 V 를 V8/V9 까지
-올려가며 진단 → localStorage 에 흔적 → v1.3.3 플래시 후에도 calibration
-값은 그대로 → 학생 "천천히=V5" 가 max(5, 9) = V9 풀파워로 클램프 →
-모든 speed 라벨이 사실상 V9 → 단계차 무.
-
-#### fix 사슬 (3 커밋)
-1. `8cbf29b` — webSerial.send 에 `[serial→]` console.log 디버그
-2. `207643c` — **floor 클램프 폐기 + 시동 V 균등 배분** (`speedToLevel`)
-3. `746c666` — **zustand persist version 1→2** + migrate 함수로 v1.3.2 진단 시기 비정상 시동 V (V8/V9) 흔적 강제 reset. 사용자 측 dev tools 명령 입력 없이 강제 새로고침만으로 정상화.
-```ts
-// commands.ts
-export function speedToLevel(label: SpeedLabel, threshold: number): number {
-  const t = Math.max(0, Math.min(9, threshold));
-  if (label === '천천히') return t;          // 시동 V 그대로
-  if (label === '빠르게') return 9;           // 풀파워
-  return Math.round((t + 9) / 2);             // 보통 = 중간
-}
-```
-
-매핑 결과:
-- 시동 V=3 모터 → 천천히 V3, 보통 V6, 빠르게 V9 (PWM 84/168/255 — V Sweep 4단계와 흡사)
-- 시동 V=5 모터 → 천천히 V5, 보통 V7, 빠르게 V9 (PWM 140/196/255)
-- 시동 V=8 인 보드 (비정상) → 천천히 V8, 보통 V9, 빠르게 V9 (단계차 줄지만 모터 한계)
-
-#### 새 운영 컨셉 (어른+아이 분리)
-- **/play/test (어른용)**: 모터별 시동 V 측정 + 캘리브레이션 카드
-- **/play (학생용)**: localStorage 의 시동 V 자동 적용 → 학생은 그냥 "천천히/보통/빠르게" 라벨로 놀기
-- zustand persist 로 두 페이지 자동 공유 (이미 구현)
-
-#### 디버그
-- `webSerial.send` 에 `console.log('[serial→]', payload)` 추가 → PC dev tools Console
-  탭에서 어떤 V/W/A 명령이 보드에 가는지 실시간 확인 가능
-
-#### 검증 결과 (사용자 보고, 5/9 저녁)
-- ✅ 3단계 속도 차이가 M1~M4 모두에서 정확하게 들림
-- 즉 자연어 → DSL → speedToLevel(시동 V 기준) → V 명령 → 펌웨어 v1.3.3 → 모터 PWM 흐름이 끝까지 정상 동작
-
-### 🟡 미해결 / 보류
-- **디자인 원본** — 사용자 제공 대기 (현재 4DFrame-Android 톤 임시 적용. 사용자 다시 줄 예정)
-- **/play 학생용 페이지** — 사용자 보고 "글씨 작아 검증 안 됨". 디자인 원본 받은 후 재작업
-- **카메라 인터랙티브 v1** — 손만 가능. 얼굴/머리 v0.1 미구현
-
-### 🟢 후속 작업 (5/10 데모 후 v1.1)
-- 펌웨어 자동 플래시 옵션 (Web Serial STK500v1 JS 포팅) — 사용자 직접 보드 업그레이드
-- Turso 영속 메트릭 + 사용자 인증 (Clerk via Vercel Marketplace)
-- 학생 결제 통합 (Stripe / Toss Payments)
-- 카메라 얼굴 인식 → 자동차 방향
-- Lyria 3 Clip 동적 효과음 생성 (5/10 후 wow moment)
+펌웨어 어휘 (사용 빈도순):
+- **W/A/S/D**: 4모터 전후좌우 (모든 모터)
+- **0**: 전체 정지
+- **V0~V9**: globalPwm (v1.3+)
+- **1234/!@#$**: 단일 모터 forward/reverse
+- **5/%/6/^**: 서보 SA(입) / SB(꼬리) ±15도
+- **X{idx}{duty}**: 단일 PWM 핀 변조 (idx 0=D5/M2, 1=D6/M1, 2=D9/M3, 3=D10/M4)
+- **F1~F4**: 모터 방향 토글
+- **?**: 진단 / **\***: 소프트 reset
 
 ---
 
-## 4. 기술 스택 (현재)
+## 3. 알려진 이슈 / 미해결
 
-### 프런트엔드
-Next.js 16 (App Router, Turbopack) + React 19 + TypeScript 5
-Tailwind v4, 인라인 CSS-in-JS
-Zustand v5 (+ persist)
-Framer Motion 12, Lucide React, @react-three/fiber
+### 🟠 음성 입력 (Web Speech API) — 환경 의존
+- 사용자 환경에서 onspeechstart 한 번도 안 호출 → 12회 자동 재시작 후 종료.
+- 우리 코드 측 fix 한계 (continuous=true + 자동 재시작 + 화면 진단 칩 다 적용).
+- alert: 시스템 마이크 / Chrome 권한 / 다른 앱 점유 / 인터넷 연결 4가지 점검.
+- **대안**: MediaRecorder + Gemini STT 또는 Whisper. 큰 작업, 미실행.
 
-### AI / 음성
-Vercel AI SDK v6 + AI Gateway (OIDC)
-- **claude-sonnet-4-6** (자연어 → JSON DSL, 게이트웨이)
-- **gemini-3.1-flash-tts-preview** (음성, 직접 Gemini API — Gateway 미지원)
-- WAV 헤더 변환 (Gemini PCM L16 → audio/wav)
-Web Audio API (square-wave 멜로디 합성, 동요 6곡)
-@mediapipe/tasks-vision (lazy import, 손 인식)
+### 🟢 미해결 / 보류
+- **폭파도** — 사진 인식 결과 → 모터/프레임/연결 시각 분해 일러스트. 사용자 비전 "마지막으로". 미실행.
+- 카메라 인식 — 손만. 얼굴/머리 (head_tilt) 모드는 placeholder 만. v0.1 미구현.
 
-### 보드 통신
-Web Serial API (Chromium 전용)
-- 어휘 SSoT: `src/lib/commands/commands.ts` (+ commands.yaml 스펙)
-- Mac USB-C: `/dev/cu.usbserial-A5069RR4`
-- Baud 115200
+---
 
-### 인프라
-Vercel (Fluid Compute) + GitHub auto deploy
-- 환경변수: VERCEL_OIDC_TOKEN (12시간 만료, 매번 vercel env pull), GOOGLE_GENERATIVE_AI_API_KEY, ADMIN_PASSWORD
+## 4. 핵심 모듈 트리
 
-### 페이지
-- `/` 마케팅 (다크 글래스 네온, 그대로)
-- `/play` 학생용 (D-1 가로 레이아웃 + 4D Land 톤 임시. 디자인 원본 대기)
-- `/play/test` 디버그 (모터/서보 캘리브, V Sweep, 풀 어휘 v1.3.2)
-- `/admin` 관리자 (사용량 + 외부 대시보드 링크)
-- `/api/chat`, `/api/tts`, `/api/admin/metrics`
-
-### 핵심 모듈
 ```
 src/lib/
-  ai/systemPrompt.ts      (단순화 페르소나, 동요 가이드 포함)
-  admin/metrics.ts        (in-memory 카운터, v1.1 Turso 영속 예정)
-  calibration/store.ts    (보드별 시동 V + DIR, localStorage)
-  commands/commands.ts    (어휘 SSoT + isV13Plus helper)
-  dsl/schema.ts           (Step types + validateProgram)
-  dsl/interpreter.ts      (Program 실행, fw 자동 분기)
-  serial/webSerial.ts     (Web Serial 연결)
-  sound/soundManager.ts   (TTS prefetch + 효과음 캐시)
-  sound/melodySynth.ts    (Web Audio 동요 6곡)
+  ai/systemPrompt.ts        — 학생 친화 톤 + 작품별 본질 + variation_chips 가이드
+  admin/metrics.ts          — in-memory 호출 카운터
+  calibration/store.ts      — 보드별 시동 V (zustand persist v2)
+  commands/commands.ts      — 어휘 SSoT + speedToLevel + isV13Plus
+  dsl/schema.ts             — Step types + validateProgram (artwork list ballerina 포함)
+  dsl/interpreter.ts        — Program 실행 + speedToLevel 매핑
+  serial/webSerial.ts       — Web Serial + console.log [serial→]
+  sound/soundManager.ts     — TTS + 효과음 캐시
+  sound/melodySynth.ts      — Web Audio 멜로디 8곡 (tune 별 oscType + gain + release)
+  skills/library.ts         — 6 built-in 스킬 + Skill.execute (executor)
+  skills/customStore.ts     — 학생 커스텀 스킬 (zustand persist, max 30)
+  gestures/mappingStore.ts  — 손가락 개수 6 슬롯 매핑 (zustand persist v2)
+
 src/components/play/
-  Joystick.tsx, SpeedGauge.tsx, ServoGauge.tsx, CameraPanel.tsx
-public/sounds/        (10 mp3 효과음)
-public/fdland/        (4D Land 디자인 자산 8개 — logo3, main_ill 등)
+  Joystick.tsx              — onMove(x,y,mag) + onDirection 호환
+  CameraPanel.tsx           — MediaPipe HandLandmarker + countFingers + Lm 객체 타입
+  CameraCapture.tsx         — getUserMedia 직접 촬영 (사진 인식 페이지용)
+
+src/app/
+  play/page.tsx             — 메인 (작품 선택 / 스킬 / 사진 / 직접 조종 / 손 동작 / 입력)
+  play/identify/page.tsx    — 사진 인식 별도 페이지
+  play/test/page.tsx        — 어른용 디버그 (V Sweep, 모터 캘리브)
+  api/chat/route.ts         — 자연어 → DSL (claude-sonnet-4-6 + Vercel AI Gateway)
+  api/identify-artwork/route.ts — 사진 → artwork (claude-sonnet-4-6 vision)
+  api/tts/route.ts          — Gemini 3.1 Flash TTS
+
+public/sounds/              — 효과음 mp3 10개
+public/fdland/              — 4D Land 디자인 자산 (현재 미사용)
 ```
 
 ---
 
-## 5. D-day (5/10) 데모 전 마지막 체크리스트
+## 5. 다음 작업 후보 (우선순위)
 
-### 사용자 검증 (5/9 저녁 — 모두 완료)
-- [x] PC 환경에서 라이브 https://4dframe-ai.vercel.app/play/test 접속 ✅
-- [x] 보드 연결 → **FW 뱃지 `1.3.3 ✓ 최신`** 확인 ✅
-- [x] V Sweep — M2/M3/M4 모두 V3/V5/V7/V9 단계차 명확 ✅
-- [x] 서보 풀 가동 (SA, SB) — 90→0→180→90 부드럽게 ✅
-- [x] 자연어 시연 — `/play` 페이지에서 3단계 속도차 모든 모터 정상 ✅
+### 🔴 시급 (사용자 의향 따라)
+1. **폭파도** (사용자 비전 마지막) — 사진 인식 결과 + Gemini Vision → 분해 일러스트. SVG 또는 GPT-Image. /play/identify 페이지 확장 또는 새 라우트.
+2. **음성 입력 대안** — Web Speech API 환경 의존 우회. MediaRecorder + Gemini Audio API 직접 호출.
 
-### 환경 차이 (5/9 저녁 정정)
-- **모터 M3/M4 회귀**는 환경 무관 — 펌웨어 v1.3.2 자체 결함 (timer1 모드 reset 누락). v1.3.3 플래시로 해결 예정.
-- **서보**: PC ✅, Mac ❌. Mac USB-C 5V 토크 부족 (별개 이슈, 9V 외부 전원 필요). 데모 PC 는 Windows/Chromium 권장.
+### 🟡 차순위
+3. **얼굴/머리 모드** — MediaPipe FaceLandmarker 추가. CameraPanel 의 head_tilt placeholder 완성.
+4. **다른 작품 executor 화** — viking_swing, swing_round 도 음악 sync 화 (현재는 step 시퀀스).
+5. **사진 인식 페이지의 chat-like 대화** — 학생이 사진 보고 질문 → AI 응답 흐름.
 
-### 데모 환경 가정 (5/10)
-- PC (Chromium) + v1.3.3 플래시된 보드 → 모터 4채널 + 서보 2채널 모두 정상 동작 기대
-- Mac 데모 시: 9V 외부 전원 필수 + v1.3.3
-
----
-
-## 6. 다음 세션 — D-day (5/10) 우선순위
-
-### 시급 (오전)
-1. 사용자가 디자인 원본 제공 → /play 학생 페이지 디자인 적용
-2. 라이브 V Sweep 검증 결과에 따라 추가 fix
-3. 데모 시나리오 리허설 (자연어 5종 + 동요 + 카메라 + 수동 조종)
-
-### 데모 직전 (오후)
-4. 라이브 페이지 최종 검증 (모든 페이지 200 OK)
-5. 데모 환경 셋업 (PC + 9V + 보드 + 작품)
-
-### 데모 후 v1.1 (5/11 ~)
-- 펌웨어 자동 플래시 옵션
-- 사진 인식 (C 의도 — 학생 작품 사진 + 갤러리)
-- Turso 영속 메트릭
-- 사용자 인증 (Clerk)
+### 🟢 후속 (D+ 미정)
+6. **Turso 영속 메트릭** — admin/metrics 가 in-memory.
+7. **사용자 인증 (Clerk)** — 커스텀 스킬 서버 동기화.
+8. **결제 통합** (Stripe / Toss) — 유료 버전.
+9. **펌웨어 자동 플래시 옵션** — Web Serial STK500v1 JS 포팅.
 
 ---
 
-## 7. 결정/사실 빠른 참조
+## 6. 결정/사실 빠른 참조
 
 - **시리얼 포트** (Mac): `/dev/cu.usbserial-A5069RR4`
 - **Baud**: 115200
-- **펌웨어 (사용자 본인 보드)**: v1.3.3 (Ami5_V01, 5/9 저녁 플래시 완료, Verify OK)
-- **펌웨어 컴파일**: `arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328 04_Base_Program/MechatronicsController/`
-- **펌웨어 플래시**: `python3.14 stk500_flash.py <hex 경로>` (Mac, USB-C 클론 보드)
-- **명령 어휘 (학생 보드 v1.0 호환)**: W/A/S/D, 1234/!@#$, 5/%/6/^, 0
-- **명령 어휘 (v1.3.2 추가)**: V0~V9, F1~F4, X{idx}{duty}, ?, *
-- **모터 매핑 v1.3.2**: D5=M2, D6=M1, D9=M3, D10=M4
-- **서보 매핑**: D3=SA(입), D11=SB(꼬리), ±15도 단위
-- **timer 충돌**: Servo 라이브러리 = timer1 → D9, D10 PWM 영향 (v1.3.2 동적 detach 로 해결)
+- **사용자 보드 펌웨어**: v1.3.3 (Ami5_V01)
+- **펌웨어 컴파일**: `arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328 --build-path "$(pwd)/build" 04_Base_Program/MechatronicsController/`
+- **펌웨어 플래시**: `python3.14 stk500_flash.py 04_Base_Program/MechatronicsController/build/MechatronicsController.ino.hex`
+- **모터 매핑 v1.3.3**: D5=M2, D6=M1, D9=M3, D10=M4 (PWM)
+- **서보 매핑**: D3=SA(입), D11=SB(꼬리), ±15도
+- **timer 충돌**: Servo 라이브러리 = timer1 → D9, D10 PWM 영향 (v1.3.3 동적 detach + 명시 reset 으로 해결)
+- **Vercel AI Gateway**: VERCEL_OIDC_TOKEN 자동 인증, claude-sonnet-4-6
+- **TTS**: gemini-3.1-flash-tts-preview (직접 Gemini API, Gateway 미지원)
+- **localStorage 키**:
+  - `4dframe-calibration` v2 (모터 시동 V)
+  - `4dframe-custom-skills` v1 (학생 저장 스킬)
+  - `4dframe-gesture-mapping` v2 (손가락 ↔ 동작)
 
 ---
 
-## 8. 권한 (.claude/settings.local.json)
+## 7. 권한 (.claude/settings.local.json)
+
 ```json
 {
   "permissions": {
@@ -311,8 +214,22 @@ public/fdland/        (4D Land 디자인 자산 8개 — logo3, main_ill 등)
 
 ---
 
-## 9. ADMIN_PASSWORD (참고)
+## 8. 다음 세션 첫 검증 체크 (라이브)
 
-`kiQVGOg---k8E48U` (5/7 발급, .env.local + Vercel production/development 등록)
+PC 크롬에서 https://4dframe-ai.vercel.app/play 강제 새로고침 후:
+
+- [ ] 보드 연결 → FW 뱃지 `1.3.3 ✓ 최신`
+- [ ] 발레리나 → "🩰 오르골 발레리나" 스킬 → 음악 + 회전이 끊김 없이 점진 감속
+- [ ] 자동차 또는 직접 조종 ON → Joystick 끝까지/조금 밀기 비교 → V level 차이 명확
+- [ ] 손 동작 ON → 손가락 1/2/3/4 개씩 보여주기 → 진단 칩에 정확한 % 와 액션 표시
+- [ ] /play/identify → 카메라 미러 정상 + 작품 사진 → 분석 카드 + ideas chips
+- [ ] 자연어 발화 → 응답 카드 + 후속 제안 칩 클릭 → input 채워짐 + focus
+- [ ] 💾 내 스킬 저장 → 작품 카드에 ✕ 삭제 가능한 칩 등장
+
+---
+
+## 9. ADMIN_PASSWORD
+
+`kiQVGOg---k8E48U` (5/7 발급, .env.local + Vercel 환경변수 등록)
 - /admin 접근용
 - 정식 운영 전 회전 권장
