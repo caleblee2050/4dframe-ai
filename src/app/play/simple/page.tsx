@@ -732,7 +732,7 @@ export default function SimplePlayPage() {
           </button>
         </div>
 
-        {/* ─── 하단 — 캐릭터 + 메시지 + 마이크 + 거리 (화면 맨 아래 고정) ─── */}
+        {/* ─── 하단 — 캐릭터 + 메시지 + 표정 도구 (화면 맨 아래 고정) ─── */}
         <div className="tg-character-bar">
           {/* 캐릭터 */}
           <Image
@@ -749,49 +749,43 @@ export default function SimplePlayPage() {
             {micStatus || statusMessage || t('character.greeting')}
           </div>
 
-          {/* 우측 하단 — 거리센서 토글 + 설정 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {/* 거리센서 토글 — 클릭 시 ON/OFF (AI 가 거리에 반응할지 결정) */}
+          {/* 우측 하단 — 원본 이미지에서 자른 표정 도구 */}
+          <div className="tg-bottom-icons" aria-label="작품 도구">
+            {/* 입 아이콘 — 설정 열기 */}
             <button
-              onClick={() => setDistanceReactivity((v) => !v)}
-              disabled={!isConnected}
-              title={
-                !isConnected ? '보드 미연결' :
-                distanceReactivity ? '거리 반응 모드 ON — AI 가 거리에 반응. 클릭하면 끔' :
-                '거리 반응 모드 OFF — 클릭하면 켬'
-              }
-              style={{
-                fontFamily: 'inherit', cursor: isConnected ? 'pointer' : 'not-allowed',
-                background: distanceReactivity ? C.purple : '#fff',
-                color: distanceReactivity ? '#fff' : C.textDark,
-                border: `2.5px solid ${C.textDark}`, borderRadius: 22,
-                padding: '8px 14px', fontSize: 18, fontWeight: 800,
-                display: 'flex', alignItems: 'center', gap: 6,
-                opacity: isConnected ? 1 : 0.45,
-                boxShadow: distanceReactivity ? `2px 2px 0 ${C.textDark}` : 'none',
-              }}
+              className="tg-bottom-icon-btn"
+              onClick={() => setSettingsOpen(true)}
+              title="설정"
             >
-              <span>{distanceReactivity ? '👀' : '🙈'}</span>
-              {isConnected && (
-                <span style={{ fontSize: 13, fontWeight: 700 }}>
-                  {board.lastDistanceCm ?? '—'}
-                </span>
-              )}
+              <Image
+                className="tg-mouth-img"
+                src="/thinkgen/mouth-icon.png"
+                alt="입 모양"
+                width={112}
+                height={82}
+              />
             </button>
 
-            {/* 설정 (부모용) */}
+            {/* 눈 아이콘 — 거리 반응 토글 */}
             <button
-              onClick={() => setSettingsOpen(true)}
-              title="설정 (모터 길들이기 / 서보 캘리브 / 어른용)"
-              style={{
-                fontFamily: 'inherit', cursor: 'pointer',
-                background: '#fff', color: C.textDark,
-                border: `2.5px solid ${C.textDark}`, borderRadius: '50%',
-                width: 44, height: 44, fontSize: 20,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              className={`tg-bottom-icon-btn ${distanceReactivity ? 'is-active' : ''}`}
+              onClick={() => {
+                if (isConnected) setDistanceReactivity((v) => !v);
               }}
+              aria-disabled={!isConnected}
+              title={
+                !isConnected ? '보드 미연결' :
+                distanceReactivity ? '거리 반응 모드 ON' :
+                '거리 반응 모드 OFF'
+              }
             >
-              ⚙️
+              <Image
+                className="tg-eyes-img"
+                src="/thinkgen/eyes-icon.png"
+                alt="눈 모양"
+                width={120}
+                height={104}
+              />
             </button>
           </div>
         </div>
