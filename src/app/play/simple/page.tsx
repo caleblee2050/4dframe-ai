@@ -259,8 +259,8 @@ export default function SimplePlayPage() {
           playEffect(e.sound, e.volume);
         } else if (e.type === 'play_tune') {
           const muted = useSoundStore.getState().muted;
-          if (e.await_melody) await playMelody(e.tune, e.tempo, muted);
-          else void playMelody(e.tune, e.tempo, muted);
+          if (e.await_melody) await playMelody(e.tune, e.tempo, muted, e.custom);
+          else void playMelody(e.tune, e.tempo, muted, e.custom);
         }
       },
     });

@@ -5,8 +5,11 @@
 // 학생 "학교종이 땡땡땡에 맞춰 흔들어줘" 같은 요청에 동기화.
 //
 // 음높이는 frequency Hz. 길이는 beats 단위 (tempo 적용).
+//
+// 'custom' tune — AI 가 학생 요청 (분위기/리듬/노래) 으로 직접 만든 즉석 멜로디.
+// notes 배열을 그대로 재생. 부정확해도 OK — 학생-AI 협업 창작이 핵심.
 
-import type { TuneId } from '@/lib/dsl/schema';
+import type { TuneId, CustomTune } from '@/lib/dsl/schema';
 
 // 음 → Hz 매핑 (A4=440 기준)
 const NOTE_HZ: Record<string, number> = {
@@ -26,8 +29,8 @@ interface Note {
 // 한 박자 = 0.4초 (tempo 1.0 기준 = 약 150 BPM)
 const BASE_BEAT_MS = 400;
 
-// 동요 멜로디 정의
-const TUNES: Record<TuneId, Note[]> = {
+// 동요 멜로디 정의 (preset)
+const TUNES: Record<Exclude<TuneId, 'custom'>, Note[]> = {
   // 학교종이 땡땡땡 — 솔솔라라 솔솔미 솔솔미미레 (전통 한국 동요)
   school_bell: [
     { hz: NOTE_HZ.G4, beats: 1 }, { hz: NOTE_HZ.G4, beats: 1 },
@@ -139,7 +142,31 @@ export function stopMelody(): void {
   _activeGainNodes = [];
 }
 
-export async function playMelody(tune: TuneId, tempo = 1.0, muted = false): Promise<void> {
+// custom tune 의 pitch 문자열 → Hz 변환. 'C4', 'D#4', 'rest' 모두 처리.
+// 미지의 형식은 NOTE_HZ 직접 참조 후 fallback C4.
+function pitchToHz(pitch: string): number | null {
+  const trimmed = pitch.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'rest' || trimmed === '-') return null;
+  const direct = NOTE_HZ[trimmed.toUpperCase()];
+  if (typeof direct === 'number') return direct;
+  // 못 찾으면 C4 fallback (안 들리는 것보다 낫게)
+  return NOTE_HZ.C4;
+}
+
+// 즉석 melody — AI 가 만든 notes 배열을 Note[] 로 변환
+function customToNotes(custom: CustomTune): Note[] {
+  return custom.notes.map((n) => ({
+    hz: pitchToHz(n.pitch),
+    beats: Math.max(0.1, Math.min(8, n.beats)),
+  }));
+}
+
+export async function playMelody(
+  tune: TuneId,
+  tempo = 1.0,
+  muted = false,
+  custom?: CustomTune,
+): Promise<void> {
   if (typeof window === 'undefined') return;
   if (muted) return;
 
@@ -150,12 +177,21 @@ export async function playMelody(tune: TuneId, tempo = 1.0, muted = false): Prom
     try { await ctx.resume(); } catch {}
   }
 
-  const notes = TUNES[tune];
-  if (!notes) return;
+  // custom 분기 — preset 카탈로그 외, AI 가 만든 즉석 멜로디
+  let notes: Note[];
+  if (tune === 'custom') {
+    if (!custom) return;
+    notes = customToNotes(custom);
+  } else {
+    const presetNotes = TUNES[tune];
+    if (!presetNotes) return;
+    notes = presetNotes;
+  }
 
   // tune 별 음색.
   //   music_box: triangle (부드러운 오르골 본질) + 긴 sustain (오르골 chime 느낌)
   //   jaws: sine (저음 풍부, 위협 톤)
+  //   custom: AI 지정 timbre 또는 square 기본
   //   기본: square (8-bit 전자음)
   let oscType: OscillatorType = 'square';
   let peakGain = 0.15;
@@ -171,6 +207,10 @@ export async function playMelody(tune: TuneId, tempo = 1.0, muted = false): Prom
     peakGain = 0.35;          // 저음은 잘 안 들리니 크게
     attackSec = 0.03;
     releaseSec = 0.12;
+  } else if (tune === 'custom' && custom?.timbre) {
+    oscType = custom.timbre;
+    if (custom.timbre === 'triangle') { peakGain = 0.22; releaseSec = 0.15; }
+    else if (custom.timbre === 'sine') { peakGain = 0.30; releaseSec = 0.10; }
   }
 
   const beatMs = BASE_BEAT_MS / tempo;
@@ -205,10 +245,14 @@ export async function playMelody(tune: TuneId, tempo = 1.0, muted = false): Prom
 }
 
 // 멜로디 총 길이 (ms) — UI 표시 또는 sync 용
-export function melodyDurationMs(tune: TuneId, tempo = 1.0): number {
+export function melodyDurationMs(tune: TuneId, tempo = 1.0, custom?: CustomTune): number {
+  const beatMs = BASE_BEAT_MS / tempo;
+  if (tune === 'custom') {
+    if (!custom) return 0;
+    return custom.notes.reduce((sum, n) => sum + Math.max(0.1, Math.min(8, n.beats)) * beatMs, 0);
+  }
   const notes = TUNES[tune];
   if (!notes) return 0;
-  const beatMs = BASE_BEAT_MS / tempo;
   return notes.reduce((sum, n) => sum + n.beats * beatMs, 0);
 }
 
@@ -223,4 +267,5 @@ export const TUNE_LABELS: Record<TuneId, string> = {
   beep_pattern: '🎵 띠띠 띠띠띠',
   music_box: '🎼 오르골',
   jaws: '🦈 죠스 등장',
+  custom: '🎶 즉석 멜로디',
 };

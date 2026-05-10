@@ -132,11 +132,27 @@ export type TuneId =
   | 'airplane'       // 떴다떴다 비행기
   | 'beep_pattern'   // 단순 띠띠띠 패턴 (전자음)
   | 'music_box'      // 오르골 (반짝반짝 멜로디 + 태엽 풀어짐 dynamics — 빨라졌다 느려짐)
-  | 'jaws';          // 죠스 등장음 — 빠~ㅂ밤.. 빠~ㅂ밤.. (긴장감 점증)
+  | 'jaws'           // 죠스 등장음 — 빠~ㅂ밤.. 빠~ㅂ밤.. (긴장감 점증)
+  | 'custom';        // AI 가 학생 요청 (분위기/리듬/노래 이름) 으로 직접 만든 멜로디
+
+// 음 표기 — pitch 'C3'~'C6' (또는 'rest' = 쉼표), beats = 박자 (0.25/0.5/1/2)
+export interface CustomNote {
+  pitch: string;     // 'C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5'... 또는 'rest'
+  beats: number;     // 0.25, 0.5, 1, 2 등
+}
+
+// AI 가 만드는 즉석 멜로디 옵션
+export interface CustomTune {
+  notes: CustomNote[];   // 8~32음 권장
+  // 음색 — 'square' (전자음), 'triangle' (오르골), 'sine' (부드러움). 분위기 따라 AI 선택.
+  timbre?: 'square' | 'triangle' | 'sine';
+}
 
 export interface PlayTuneStep extends BaseStep {
   do: 'play_tune';
   tune: TuneId;
+  // tune='custom' 일 때 필수 — AI 가 만든 음표 시퀀스
+  custom?: CustomTune;
   // 1.0 = 원래 속도. 학생 "더 빠르게" 시 1.5~2.0.
   tempo?: number;
   // 멜로디 음 길이별 모터/서보 동작이 같이 가도록 — true 시 클라이언트는 멜로디 길이만큼만 wait
@@ -262,9 +278,28 @@ function validateStep(step: Step, path: string): void {
       if (step.volume !== undefined) assertInRange(`${path}.volume`, step.volume, 0, 1);
       return;
     case 'play_tune':
-      if (!['school_bell','twinkle','butterfly','mountain_rabbit','three_bears','beep_pattern','music_box','jaws'].includes(step.tune))
+      if (!['school_bell','twinkle','butterfly','mountain_rabbit','three_bears','airplane','beep_pattern','music_box','jaws','custom'].includes(step.tune))
         throw new DslValidationError(`${path}.tune`, `잘못된 tune: ${step.tune}`);
       if (step.tempo !== undefined) assertInRange(`${path}.tempo`, step.tempo, 0.5, 3);
+      // tune='custom' 일 때 — notes 배열 필수
+      if (step.tune === 'custom') {
+        if (!step.custom || !Array.isArray(step.custom.notes) || step.custom.notes.length === 0) {
+          throw new DslValidationError(`${path}.custom`, 'tune=custom 일 땐 custom.notes 배열 필수');
+        }
+        if (step.custom.notes.length > 64) {
+          throw new DslValidationError(`${path}.custom.notes`, '음표는 최대 64개');
+        }
+        for (let i = 0; i < step.custom.notes.length; i++) {
+          const n = step.custom.notes[i];
+          if (typeof n !== 'object' || n === null || typeof (n as { pitch?: unknown }).pitch !== 'string' || typeof (n as { beats?: unknown }).beats !== 'number') {
+            throw new DslValidationError(`${path}.custom.notes[${i}]`, 'note 는 { pitch:string, beats:number }');
+          }
+          assertInRange(`${path}.custom.notes[${i}].beats`, (n as { beats: number }).beats, 0.1, 8);
+        }
+        if (step.custom.timbre !== undefined && !['square','triangle','sine'].includes(step.custom.timbre)) {
+          throw new DslValidationError(`${path}.custom.timbre`, 'timbre 는 square/triangle/sine');
+        }
+      }
       return;
     default: {
       const exhaustive: never = step;

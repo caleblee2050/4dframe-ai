@@ -312,9 +312,9 @@ export default function PlayPage() {
           // 멜로디 재생. await_melody=true 면 멜로디 끝까지 대기 (interpreter 의 await 와 함께).
           const muted = useSoundStore.getState().muted;
           if (e.await_melody) {
-            await playMelody(e.tune, e.tempo, muted);
+            await playMelody(e.tune, e.tempo, muted, e.custom);
           } else {
-            void playMelody(e.tune, e.tempo, muted);
+            void playMelody(e.tune, e.tempo, muted, e.custom);
           }
         }
         else if (e.type === 'calibrate') {
@@ -481,8 +481,8 @@ export default function PlayPage() {
         else if (e.type === 'play_sound') playEffect(e.sound, e.volume);
         else if (e.type === 'play_tune') {
           const muted = useSoundStore.getState().muted;
-          if (e.await_melody) await playMelody(e.tune, e.tempo, muted);
-          else void playMelody(e.tune, e.tempo, muted);
+          if (e.await_melody) await playMelody(e.tune, e.tempo, muted, e.custom);
+          else void playMelody(e.tune, e.tempo, muted, e.custom);
         }
         else if (e.type === 'calibrate') {
           const msg = ({

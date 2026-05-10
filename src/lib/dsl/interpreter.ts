@@ -23,7 +23,7 @@ export type InterpreterEvent =
   | { type: 'say'; text: string }
   | { type: 'calibrate'; reason: CalibrateStep['reason'] }
   | { type: 'play_sound'; sound: PlaySoundStep['sound']; volume: number }
-  | { type: 'play_tune'; tune: PlayTuneStep['tune']; tempo: number; await_melody: boolean }
+  | { type: 'play_tune'; tune: PlayTuneStep['tune']; tempo: number; await_melody: boolean; custom?: PlayTuneStep['custom'] }
   | { type: 'step_start'; step: Step; index: number }
   | { type: 'step_end'; step: Step; index: number }
   | { type: 'aborted' }
@@ -270,9 +270,9 @@ async function execPlayTune(step: PlayTuneStep, ctx: StepCtx) {
   // 기본은 false — 멜로디와 모터 동작이 동시 진행 (학생 "음악 맞춰서 흔들어줘" 의도).
   const awaitMelody = step.await_melody ?? false;
   if (awaitMelody) {
-    await ctx.emit({ type: 'play_tune', tune: step.tune, tempo: step.tempo ?? 1.0, await_melody: true });
+    await ctx.emit({ type: 'play_tune', tune: step.tune, tempo: step.tempo ?? 1.0, await_melody: true, custom: step.custom });
   } else {
-    ctx.emit({ type: 'play_tune', tune: step.tune, tempo: step.tempo ?? 1.0, await_melody: false });
+    ctx.emit({ type: 'play_tune', tune: step.tune, tempo: step.tempo ?? 1.0, await_melody: false, custom: step.custom });
   }
 }
 

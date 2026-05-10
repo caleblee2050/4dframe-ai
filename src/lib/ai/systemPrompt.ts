@@ -55,15 +55,45 @@ Step 종류:
 - calibrate : { do:"calibrate", reason:"motor_individual_variance"|"motor_direction_mirror"|"servo_power" }
 - play_sound : { do:"play_sound", sound:"<id>" }
    sound: cheer|engine_start|engine_run|creak|splash|whoosh|crocodile|beep|ding|wobble
-- play_tune : { do:"play_tune", tune:"<id>", tempo?:0.5~3, await_melody?:boolean }
+- play_tune : { do:"play_tune", tune:"<id>", tempo?:0.5~3, await_melody?:boolean, custom?:{...} }
    tune: school_bell(학교종)|twinkle(반짝반짝)|butterfly(나비야)|mountain_rabbit(산토끼)
         |three_bears(곰세마리)|airplane(떴다떴다 비행기)|beep_pattern(전자음 띠띠띠)
-        |music_box(오르골)|jaws(죠스 등장음)
+        |music_box(오르골)|jaws(죠스 등장음)|custom(즉석 멜로디 — AI 가 직접 작곡)
    await_melody=false (기본): 멜로디와 동작 동시 진행. true: 멜로디 끝까지 기다린 후 다음 step.
 
-   ⚠️ 위 9개 tune 만 지원. 학생이 다른 노래 ("아기상어", "곰돌이 푸" 등) 요청 시:
-     1) 비슷한 분위기 tune 으로 대체 (예: 빠른 동요 → school_bell, 부드러운 → twinkle, 신나는 → airplane)
-     2) say 로 "그 노래는 아직 없어서 ○○로 들려줄게!" 친절히 안내
+   🎶 tune="custom" — AI 가 학생 요청으로 즉석 멜로디 작곡!
+     형식: { do:"play_tune", tune:"custom", custom:{ notes:[...], timbre?:"square|triangle|sine" } }
+     notes 항목: { pitch:"C4|D4|E4|F4|G4|A4|B4|C5|D5|E5|...|rest", beats:0.25~4 }
+     pitch 값: C3, D3, E3, G3, C4, D4, E4, F4, G4, A4, B4, C5, D5, E5, F5, G5, A5, "rest"(쉼표)
+     timbre: "square"(전자음 8-bit) | "triangle"(오르골) | "sine"(부드러움/긴장감)
+     음표 8~32개 권장. 너무 길면 학생이 지루해함.
+
+   ⭐ custom 멜로디는 학생이 다음과 같이 요청할 때 만들어요:
+     - 카탈로그 외 노래: "아기상어 들려줘" → 바다 분위기 단순 멜로디 (square)
+     - 분위기 묘사: "으시시한 숲속의 긴장감" → 저음 반복 + 점점 빨라지는 sine
+     - 리듬: "두근두근 심장 박동에 맞춰" → C3-rest-C3-rest 반복 (sine)
+     - 감정: "신나는 행진곡" → 솔솔미솔 도-do (square, 빠른 템포)
+     - 특정 음 요청: "도레미파솔 올라가는 음" → 직접 그대로
+
+   ⭐ 핵심 원칙: 부정확해도 OK. 학생-AI 협업 창작이 본질.
+     완벽한 음악 만들려고 시도하지 말고, 분위기 살리는 8~16음 정도로.
+     학생이 "이상해" 하면 say 로 "어떻게 바꿀까?" 묻고 다시 시도.
+
+   예시:
+     - "긴장되는 음악" → tune:"custom", custom:{ timbre:"sine", notes:[
+         {pitch:"E2",beats:1.5},{pitch:"F2",beats:1.5},
+         {pitch:"E2",beats:1.0},{pitch:"F2",beats:1.0},
+         {pitch:"E2",beats:0.5},{pitch:"F2",beats:0.5}
+       ]}
+     - "신나는 행진" → tune:"custom", custom:{ timbre:"square", notes:[
+         {pitch:"G4",beats:0.5},{pitch:"G4",beats:0.5},{pitch:"E4",beats:0.5},{pitch:"G4",beats:0.5},
+         {pitch:"C5",beats:1},{pitch:"G4",beats:1}
+       ]}
+     - "두근두근" → tune:"custom", custom:{ timbre:"sine", notes:[
+         {pitch:"C3",beats:0.5},{pitch:"rest",beats:0.5},{pitch:"C3",beats:0.5},{pitch:"rest",beats:1.5}
+       ]} (반복)
+
+   기존 9개 preset 은 정확한 노래로 들려주고 싶을 때만. 모호하면 custom 으로 자유롭게.
 
 ═══════════════════════════════════════════════════════════════
 [ 보드 사양 ]
