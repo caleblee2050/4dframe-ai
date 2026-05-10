@@ -17,7 +17,7 @@ import { useBoardStore } from '@/lib/serial/webSerial';
 import { useCalibrationStore } from '@/lib/calibration/store';
 import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
 import { validateProgram, type Program, type Step, type MotorId } from '@/lib/dsl/schema';
-import { palette, radius, shadow, border, motion as m } from '@/lib/design/tokens';
+import { palette, radius, shadow, border, polkaDotBg, motion as m } from '@/lib/design/tokens';
 import { MOTORS, GLOBAL } from '@/lib/commands/commands';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
 import { useSoundStore, playEffect, speakText, stopSpeaking, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
@@ -901,14 +901,13 @@ export default function PlayPage() {
 
   return (
     <main
+      className="play-kid-skin"
       style={{
         minHeight: '100vh',
-        background: palette.bg,
-        backgroundImage: 'radial-gradient(#E8E0CE 2px, transparent 2px)',
-        backgroundSize: '30px 30px',
+        ...polkaDotBg,
         color: palette.textMain,
         padding: 24,
-        fontFamily: "'Nunito', system-ui, sans-serif",
+        fontFamily: 'var(--font-jua), var(--font-noto-sans-kr), system-ui, sans-serif',
         fontWeight: 600,
       }}
     >

@@ -2,21 +2,21 @@
 // 마케팅 랜딩(src/app/page.tsx)의 다크 글래스 네온과는 별개. 학생 대상 화면(/play 등)에서만 사용한다.
 
 export const palette = {
-  bg: '#FFF8E7',
+  bg: '#FFF3DF',
   panel: '#FFFFFF',
-  primary: '#FF6B6B',
-  secondary: '#FFE66D',
-  tertiary: '#4ECDC4',
-  accent: '#A8E6CF',
-  blueAccent: '#45B7D1',
-  textMain: '#2D3142',
-  textMuted: '#6B708D',
-  borderDark: '#4A5568',
-  shadowColor: 'rgba(74, 85, 104, 0.25)',
+  primary: '#3F087F',
+  secondary: '#FFEF35',
+  tertiary: '#9BE4E1',
+  accent: '#B6EBB0',
+  blueAccent: '#88E8E6',
+  textMain: '#110514',
+  textMuted: '#6B4A88',
+  borderDark: '#110514',
+  shadowColor: '#9BE4E1',
   // skill-item 3n 패턴
-  tileBlue: '#E8F7FF',
-  tilePink: '#FFF0F5',
-  tileMint: '#F0FFF4',
+  tileBlue: '#E0FFF7',
+  tilePink: '#FFC9F5',
+  tileMint: '#DDF8EF',
 } as const;
 
 export const radius = {
@@ -26,10 +26,10 @@ export const radius = {
 } as const;
 
 export const shadow = {
-  brutal: '3px 3px 0px rgba(74, 85, 104, 0.25)',
-  brutalHover: '5px 5px 0px rgba(74, 85, 104, 0.25)',
-  brutalActive: '0px 0px 0px rgba(74, 85, 104, 0.25)',
-  brutalSm: '2px 2px 0px rgba(74, 85, 104, 0.25)',
+  brutal: '8px 9px 0px #3F087F',
+  brutalHover: '10px 11px 0px #3F087F',
+  brutalActive: '2px 2px 0px #3F087F',
+  brutalSm: '4px 5px 0px #3F087F',
 } as const;
 
 export const border = {
@@ -45,8 +45,9 @@ export const motion = {
 
 // 배경 폴카닷 패턴 — body 또는 메인 컨테이너에 적용
 export const polkaDotBg = {
-  backgroundImage: 'radial-gradient(#E8E0CE 2px, transparent 2px)',
-  backgroundSize: '30px 30px',
+  backgroundColor: palette.bg,
+  backgroundImage: 'radial-gradient(#94DDDF 4px, transparent 4.5px)',
+  backgroundSize: '62px 79px',
 } as const;
 
 export const fontFamily = {
