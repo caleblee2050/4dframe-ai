@@ -605,7 +605,7 @@ export default function SimplePlayPage() {
           </button>
 
           {/* 언어 */}
-          <div style={{ display: 'flex', gap: 4 }}>
+          <div style={{ display: 'flex', gap: 6 }}>
             {LOCALES.map((l) => (
               <button
                 key={l.code}
@@ -614,9 +614,11 @@ export default function SimplePlayPage() {
                 style={{
                   fontFamily: 'inherit', cursor: 'pointer',
                   background: locale === l.code ? C.purple : '#fff',
-                  color: locale === l.code ? '#fff' : C.textDark,
-                  border: `2px solid ${C.textDark}`, borderRadius: 18,
-                  padding: '5px 11px', fontSize: 11, fontWeight: 700,
+                  border: `2px solid ${C.textDark}`, borderRadius: '50%',
+                  width: 44, height: 44,
+                  fontSize: 22, lineHeight: 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: locale === l.code ? `2px 2px 0 ${C.textDark}` : 'none',
                 }}
               >
                 {l.emoji}
