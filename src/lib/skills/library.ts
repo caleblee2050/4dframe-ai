@@ -5,6 +5,7 @@
 // 자연어 모드와 공존: 학생이 "다른 동작 해줘" 등 발화 시 AI 가 새 DSL 만들어 덮어씀.
 
 import type { Program } from '@/lib/dsl/schema';
+import { melodyDurationMs } from '@/lib/sound/melodySynth';
 
 type Artwork = NonNullable<Program['artwork']>;
 
@@ -15,7 +16,8 @@ export interface SkillExecutor {
   delay: (ms: number) => Promise<void>;
   signal: AbortSignal;
   speak: (text: string) => Promise<void>;
-  playMelody: (tune: string) => void;
+  // playMelody 가 Promise<void> 반환 — 음악 끝까지 await 가능 (sync 필요한 스킬용).
+  playMelody: (tune: string) => Promise<void>;
   playEffect: (sound: string) => void;
   setStatus: (text: string) => void;
 }
@@ -68,21 +70,42 @@ export const SKILLS: Skill[] = [
     artwork: 'viking',
     label: '학교종에 맞춰',
     emoji: '🔔',
-    description: '학교종이 땡땡땡에 맞춰 흔들어줘',
+    description: '학교종 음악과 동시에 좌우 흔들기 (음악-동작 sync)',
     program: {
       schema_version: 1,
       artwork: 'viking',
       intro: '[happy]노래에 맞춰 흔들거야!',
-      steps: [
-        { do: 'play_tune', tune: 'school_bell' },
-        { do: 'repeat', times: 12, steps: [
-          { do: 'spin', motor: 'M1', speed: '보통', direction: 'forward', duration_ms: 400 },
-          { do: 'spin', motor: 'M1', speed: '보통', direction: 'reverse', duration_ms: 400 },
-        ]},
-        { do: 'stop' },
-        { do: 'say', text: '[excited]노래랑 같이 흔들렸지? 한 번 더?' },
-      ],
+      steps: [{ do: 'say', text: '[happy]노래에 맞춰 흔들거야!' }],
       variation_chips: ['반짝반짝으로', '나비야로', '더 빠르게', '곰세마리도'],
+    },
+    // 음악-동작 정확 sync — 음악 길이만큼 좌우 흔들기, 음악 끝 = 모터 정지.
+    execute: async (ctx) => {
+      ctx.setStatus('🔔 노래에 맞춰 흔들거야!');
+      await ctx.speak('[happy]노래에 맞춰 흔들거야!');
+      if (ctx.signal.aborted) return;
+
+      const totalMs = melodyDurationMs('school_bell');
+      const SWING_MS = 400;
+      // 음악 + 흔들기 동시 시작
+      const musicPromise = ctx.playMelody('school_bell');
+      const startedAt = Date.now();
+
+      let dir = 1;
+      while (true) {
+        if (ctx.signal.aborted) { await ctx.send('0'); return; }
+        const elapsed = Date.now() - startedAt;
+        if (elapsed >= totalMs - SWING_MS) break;   // 마지막 한 번 더 안 가게 여유
+        await ctx.send('V6');
+        // M1 + M3 듀얼 (Ami5_V01 viking 표준 — M3_DIR=-1 로 회전축 정합)
+        await ctx.send(dir > 0 ? '1' : '!');
+        await ctx.send(dir > 0 ? '3' : '#');
+        await ctx.delay(SWING_MS);
+        dir *= -1;
+      }
+      await ctx.send('0');
+      await musicPromise.catch(() => {});
+      ctx.setStatus('🔔 끝!');
+      await ctx.speak('[excited]노래랑 같이 흔들렸지? 한 번 더?');
     },
   },
 
@@ -153,39 +176,48 @@ export const SKILLS: Skill[] = [
       steps: [{ do: 'say', text: '[happy]태엽 풀어줄게!' }],
       variation_chips: ['다시 태엽 감기', '거꾸로 돌리기', '더 길게 돌리기', '반짝반짝으로'],
     },
-    // 음악 진행률에 정확히 맞춰 V level 을 매끄럽게 감속.
-    // step 시퀀스로는 한 번에 한 V 만 설정 → 사이 정지/재시동으로 끊김.
-    // 여기선 하나의 'W' 시동 후 V 명령만 200ms 간격으로 갱신 → 끊김 없이 점진 감속.
+    // 음악-동작 정확 sync — 음악 진행률에 모터 V level 정확히 매핑.
+    // 핵심: 음악과 회전을 같은 시점에 시작, 같은 시점에 끝낸다.
+    //   - speak 는 음악 시작 전에 1번 (음악 시작 후엔 안 끼게)
+    //   - 음악 시작 = 회전 시작 = startedAt
+    //   - 진행률 0~1 동안 V9 → V2 linear 감속
+    //   - 음악 끝 = 회전 끝 (정지 명령) — 같은 timestamp.
     execute: async (ctx) => {
-      const TOTAL_MS = 16500;   // music_box 멜로디 대략 길이
       ctx.setStatus('🩰 오르골 풀어줄게!');
-      // 음악 시작 (비동기, 동시 진행)
-      ctx.playMelody('music_box');
+      // ① 짧은 인사말 — 음악 시작 전에 끝냄 (음악 위에 안 겹치도록)
       await ctx.speak('[happy]태엽 풀어줄게!');
       if (ctx.signal.aborted) return;
 
-      // 모든 모터 V9 으로 시작 — 발레리나가 어느 핀에 꽂혀도 OK
+      // ② 음악 길이 정확 측정 (BASE_BEAT_MS 기반, 정확)
+      const totalMs = melodyDurationMs('music_box');
+
+      // ③ 모터 시동 — 음악 시작 직전에 V9 + W 보내고 그 다음 음악 시작
+      //    이러면 학생이 보기에 음악과 회전이 동시에 시작되는 것처럼 보임
       await ctx.send('V9');
       await ctx.send('W');
 
+      // ④ 음악 시작 (await X — 뒤에서 await 함)
+      const musicPromise = ctx.playMelody('music_box');
       const startedAt = Date.now();
+
+      // ⑤ 진행률 따라 V level 감속 (250ms 마다 갱신)
       while (true) {
         if (ctx.signal.aborted) {
           await ctx.send('0');
           return;
         }
         const elapsed = Date.now() - startedAt;
-        if (elapsed >= TOTAL_MS) break;
+        if (elapsed >= totalMs) break;
 
-        const progress = elapsed / TOTAL_MS;       // 0 → 1
-        // V9 → V2 로 매끄럽게 감속 (마지막엔 거의 멈출듯)
+        const progress = elapsed / totalMs;
         const v = Math.max(2, Math.round(9 - progress * 7));
         await ctx.send(`V${v}`);
-        ctx.setStatus(`🩰 V${v} (${Math.round(progress * 100)}%)`);
+        ctx.setStatus(`🩰 ${Math.round(progress * 100)}%`);
         await ctx.delay(250);
       }
-      // 끝
+      // ⑥ 음악 끝 == 회전 끝. 정지 + 음악 마무리 await
       await ctx.send('0');
+      await musicPromise.catch(() => {});
       ctx.setStatus('🩰 끝!');
       await ctx.speak('[curious]태엽 다 풀렸네... 다시 감을까?');
     },

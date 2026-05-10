@@ -77,15 +77,38 @@ function stripAudioTags(text: string): string {
 
 export { stripAudioTags };
 
+// Gemini TTS voice — 언어별. 몽골어는 미지원이라 영어 voice 로 fallback.
+const VOICE_BY_LOCALE: Record<string, string> = {
+  ko: 'Kore',     // 한국어
+  en: 'Puck',     // 영어 (활달한 톤)
+  mn: 'Puck',     // 몽골어 voice 미지원 → 영어 voice 로 fallback
+};
+
+function currentLocale(): string {
+  if (typeof window === 'undefined') return 'ko';
+  try {
+    const raw = window.localStorage.getItem('4dframe-i18n');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed?.state?.locale ?? 'ko';
+    }
+  } catch {}
+  return 'ko';
+}
+
 // 한 텍스트의 TTS 를 fetch 해서 Blob URL 로 캐시. 캐시 hit 시 바로 반환.
+// cache 키에 locale prefix — 같은 텍스트라도 언어별로 다른 voice.
 async function fetchAndCacheTts(text: string): Promise<string | null> {
-  const cached = ttsBlobCache.get(text);
+  const locale = currentLocale();
+  const voice = VOICE_BY_LOCALE[locale] ?? VOICE_BY_LOCALE.ko;
+  const cacheKey = `${locale}:${text}`;
+  const cached = ttsBlobCache.get(cacheKey);
   if (cached) return cached;
   try {
     const res = await fetch('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, voice }),
     });
     if (!res.ok) {
       console.warn('[TTS]', res.status, await res.text().catch(() => ''));
@@ -93,7 +116,7 @@ async function fetchAndCacheTts(text: string): Promise<string | null> {
     }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
-    ttsBlobCache.set(text, url);
+    ttsBlobCache.set(cacheKey, url);
     return url;
   } catch (e) {
     console.warn('[TTS] fetch failed', e);

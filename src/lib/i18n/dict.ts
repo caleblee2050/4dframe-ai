@@ -57,6 +57,13 @@ const ko: Dict = {
   'language.label': '언어',
   'execute.button': '▶ 실행',
   'execute.stop': '⏹ 멈춤',
+  // 스킬 라벨 — 작품별 built-in
+  'skill.viking_swing': '신나게 흔들기',
+  'skill.viking_school_bell': '학교종에 맞춰',
+  'skill.car_explore': '한 바퀴 탐험',
+  'skill.crocodile_chomp': '으르렁 입 벌리기',
+  'skill.ballerina_musicbox': '오르골 발레리나',
+  'skill.swing_round': '한 방향 회전',
 };
 
 const en: Dict = {
@@ -105,6 +112,12 @@ const en: Dict = {
   'language.label': 'Language',
   'execute.button': '▶ Run',
   'execute.stop': '⏹ Stop',
+  'skill.viking_swing': 'Swing Wildly',
+  'skill.viking_school_bell': 'With School Bell Song',
+  'skill.car_explore': 'Loop Around',
+  'skill.crocodile_chomp': 'Open Wide & Chomp',
+  'skill.ballerina_musicbox': 'Music Box Ballerina',
+  'skill.swing_round': 'Steady Spin',
 };
 
 const mn: Dict = {
@@ -153,6 +166,12 @@ const mn: Dict = {
   'language.label': 'Хэл',
   'execute.button': '▶ Ажиллуулах',
   'execute.stop': '⏹ Зогсоох',
+  'skill.viking_swing': 'Хүчтэй найгуулах',
+  'skill.viking_school_bell': 'Сургуулийн хонхтой хамт',
+  'skill.car_explore': 'Эргэн тойрон судлах',
+  'skill.crocodile_chomp': 'Аман нээж хазах',
+  'skill.ballerina_musicbox': 'Хөгжимт балерин',
+  'skill.swing_round': 'Нэг чиглэлд эргэх',
 };
 
 const dicts: Record<Locale, Dict> = { ko, en, mn };

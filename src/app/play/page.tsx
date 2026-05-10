@@ -398,7 +398,7 @@ export default function PlayPage() {
       },
       playMelody: (tune: string) => {
         const muted = useSoundStore.getState().muted;
-        void playMelody(tune as Parameters<typeof playMelody>[0], 1.0, muted);
+        return playMelody(tune as Parameters<typeof playMelody>[0], 1.0, muted);
       },
       playEffect: (sound: string) => {
         playEffect(sound as Parameters<typeof playEffect>[0], 1.0);

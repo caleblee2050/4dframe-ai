@@ -18,8 +18,12 @@ import { validateProgram, type Program } from '@/lib/dsl/schema';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
 import { useSoundStore, playEffect, speakText, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
 import { playMelody } from '@/lib/sound/melodySynth';
+import { GLOBAL, isV13Plus } from '@/lib/commands/commands';
 import { useI18nStore } from '@/lib/i18n/store';
 import { LOCALES } from '@/lib/i18n/dict';
+import { Joystick } from '@/components/play/Joystick';
+import { CameraPanel } from '@/components/play/CameraPanel';
+import { useGestureMappingStore, actionById, fingerCountToKey, GESTURE_LABELS } from '@/lib/gestures/mappingStore';
 
 const ARTWORKS: Array<{ id: NonNullable<PromptContext['artwork']>; tKey: string; emoji: string }> = [
   { id: 'free',      tKey: 'artwork.free',      emoji: '🛠️' },
@@ -66,6 +70,112 @@ export default function SimplePlayPage() {
   // === Refs ===
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // === Connected flag (effect deps 용 — Computed 보다 먼저 필요) ===
+  const isConnectedEarly = board.status === 'connected';
+
+  // === Joystick (자동차 작품 시 자동 노출) ===
+  const lastJoyRef = useRef<{ t: number; signature: string }>({ t: 0, signature: '' });
+  const onJoystickMove = useCallback((x: number, y: number, mag: number) => {
+    const b = useBoardStore.getState();
+    if (b.status !== 'connected') return;
+    const now = Date.now();
+    if (mag === 0) {
+      const sig = 'STOP';
+      if (lastJoyRef.current.signature === sig) return;
+      lastJoyRef.current = { t: now, signature: sig };
+      void b.send(GLOBAL.stopAll);
+      return;
+    }
+    if (now - lastJoyRef.current.t < 80) return;
+    const fwd = -y;
+    const turn = x;
+    let left = fwd + turn, right = fwd - turn;
+    const norm = Math.max(Math.abs(left), Math.abs(right), 1);
+    left /= norm; right /= norm;
+    const v13 = isV13Plus(b.lastBoot?.fw);
+    const speedLevel = Math.max(1, Math.min(9, Math.round(mag * 9)));
+    const lDir = left > 0.10 ? 1 : left < -0.10 ? -1 : 0;
+    const rDir = right > 0.10 ? 1 : right < -0.10 ? -1 : 0;
+    const lLevel = lDir !== 0 ? speedLevel : 0;
+    const rLevel = rDir !== 0 ? speedLevel : 0;
+    const sig = `${lLevel}.${lDir}|${rLevel}.${rDir}`;
+    if (lastJoyRef.current.signature === sig) return;
+    lastJoyRef.current = { t: now, signature: sig };
+    const cmds: string[] = [];
+    if (v13) cmds.push(`X1${lLevel}`, `X2${lLevel}`, `X0${rLevel}`, `X3${rLevel}`);
+    if (lLevel > 0 && lDir !== 0) cmds.push(lDir > 0 ? '1' : '!', lDir > 0 ? '3' : '#');
+    if (rLevel > 0 && rDir !== 0) cmds.push(rDir > 0 ? '2' : '@', rDir > 0 ? '4' : '$');
+    if (cmds.length > 0) void b.send(cmds.join(''));
+  }, []);
+
+  // === Camera gesture (🖐 토글) ===
+  const [showCamera, setShowCamera] = useState(false);
+  const lastGestureSigRef = useRef('');
+  const onCameraGesture = useCallback((g: { type: 'hand' | 'head_tilt'; openness?: number; fingerCount?: number; dx?: number }) => {
+    if (g.type !== 'hand' || g.fingerCount === undefined || !Number.isFinite(g.fingerCount)) {
+      setStatusMessage('🙅 손 인식 안 됨');
+      return;
+    }
+    const fc = g.fingerCount;
+    const key = fingerCountToKey(fc);
+    const b = useBoardStore.getState();
+    const meta = key ? GESTURE_LABELS[key] : null;
+    const head = meta ? `${meta.emoji} ${meta.label}` : `손가락 ${fc}개`;
+    if (b.status !== 'connected') { setStatusMessage(`${head} — 보드 미연결`); return; }
+    if (!key) { setStatusMessage(head); return; }
+    if (lastGestureSigRef.current === key) return;
+    lastGestureSigRef.current = key;
+    const mapping = useGestureMappingStore.getState().mapping;
+    const action = actionById(mapping[key]);
+    setStatusMessage(`${head} → ${action.emoji} ${action.label}`);
+    if (action.bytes) void b.send(action.bytes);
+  }, []);
+
+  // ⌨️ 키보드 화살표 — 자동차 작품 + 보드 연결 시 활성
+  useEffect(() => {
+    if (artwork !== 'car_4wd' || !isConnectedEarly) return;
+    const keys = new Set<string>();
+    // 키보드는 mag 0.55 (V5) 보통 속도 default — 조이스틱 끝까지 밀면 V9 풀파워.
+    // Shift 키 같이 누르면 mag=1 (V9, 빠름).
+    const update = () => {
+      const ax = (keys.has('ArrowRight') ? 1 : 0) + (keys.has('ArrowLeft') ? -1 : 0);
+      const ay = (keys.has('ArrowDown') ? 1 : 0) + (keys.has('ArrowUp') ? -1 : 0);
+      const len = Math.sqrt(ax * ax + ay * ay);
+      if (len === 0) onJoystickMove(0, 0, 0);
+      else {
+        const mag = keys.has('Shift') ? 1 : 0.55;
+        onJoystickMove(ax / len, ay / len, mag);
+      }
+    };
+    const isInputFocused = () => {
+      const ae = document.activeElement;
+      const tag = (ae as HTMLElement)?.tagName;
+      return tag === 'TEXTAREA' || tag === 'INPUT' || (ae as HTMLElement)?.isContentEditable;
+    };
+    const kd = (e: KeyboardEvent) => {
+      const arrow = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key);
+      if (!arrow && e.key !== 'Shift') return;
+      if (arrow && isInputFocused()) return;
+      if (arrow) e.preventDefault();
+      if (!keys.has(e.key)) { keys.add(e.key); update(); }
+    };
+    const ku = (e: KeyboardEvent) => {
+      const arrow = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key);
+      if (!arrow && e.key !== 'Shift') return;
+      if (keys.delete(e.key)) update();
+    };
+    const blur = () => { if (keys.size > 0) { keys.clear(); onJoystickMove(0, 0, 0); } };
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', kd);
+      window.removeEventListener('keyup', ku);
+      window.removeEventListener('blur', blur);
+      if (keys.size > 0) { keys.clear(); onJoystickMove(0, 0, 0); }
+    };
+  }, [artwork, isConnectedEarly, onJoystickMove]);
 
   // === Mic ===
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -164,6 +274,38 @@ export default function SimplePlayPage() {
   }, [isGenerating, history, artwork, cal, board.lastDistanceCm, executeProgram]);
 
   // === Skill ===
+  // executor 스킬 (음악-동작 정교 sync, 예: 발레리나 오르골) 분기 — program 무시하고 직접 제어.
+  const runSkillExecutor = useCallback(async (skill: Skill) => {
+    if (!skill.execute) return;
+    setIsExecuting(true);
+    setStatusMessage('');
+    abortRef.current = new AbortController();
+    const ctx = {
+      send: (p: string) => useBoardStore.getState().send(p),
+      delay: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+      signal: abortRef.current.signal,
+      speak: async (text: string) => {
+        setStatusMessage(stripAudioTags(text));
+        await speakText(text);
+      },
+      playMelody: (tune: string) => {
+        const muted = useSoundStore.getState().muted;
+        return playMelody(tune as Parameters<typeof playMelody>[0], 1.0, muted);
+      },
+      playEffect: (sound: string) => {
+        playEffect(sound as Parameters<typeof playEffect>[0], 1.0);
+      },
+      setStatus: (text: string) => setStatusMessage(text),
+    };
+    try {
+      await skill.execute(ctx);
+    } catch (e) {
+      console.warn('[skill executor] error', e);
+      try { await ctx.send(GLOBAL.stopAll); } catch {}
+    }
+    setIsExecuting(false);
+  }, []);
+
   const onRunSkill = (skill: Skill | CustomSkill) => {
     if (isExecuting) return;
     if (!isConnected) {
@@ -171,7 +313,12 @@ export default function SimplePlayPage() {
       return;
     }
     abortRef.current?.abort();
-    void executeProgram(skill.program);
+    // 정교 sync 가 필요한 스킬은 executor 사용 (program 무시)
+    if ('execute' in skill && typeof skill.execute === 'function') {
+      void runSkillExecutor(skill as Skill);
+    } else {
+      void executeProgram(skill.program);
+    }
   };
 
   // === Mic ===
@@ -265,6 +412,12 @@ export default function SimplePlayPage() {
   const onMicToggle = () => { if (listening) stopMic(); else void startMic(); };
   useEffect(() => () => cleanupMic(), [cleanupMic]);
 
+  // 페이지 진입 시 textarea 에 자동 focus — 학생이 즉시 입력 가능
+  useEffect(() => {
+    const t = setTimeout(() => textareaRef.current?.focus(), 100);
+    return () => clearTimeout(t);
+  }, []);
+
   // === Basic skill 명령 송신 (C/O/P) ===
   const onBasicCmd = async (cmd: string) => {
     if (!isConnected) { setStatusMessage('🔌 보드를 먼저 연결해주세요!'); return; }
@@ -303,33 +456,40 @@ export default function SimplePlayPage() {
                 {t('skills.empty')}
               </div>
             ) : (
-              allSkills.map((skill, i) => (
-                <button
-                  key={skill.id}
-                  onClick={() => onRunSkill(skill)}
-                  disabled={!isConnected || isExecuting}
-                  style={{
-                    fontFamily: 'inherit',
-                    cursor: isConnected && !isExecuting ? 'pointer' : 'not-allowed',
-                    background: SKILL_BG[i] ?? C.mint,
-                    border: `3px solid ${C.textDark}`, borderRadius: 14,
-                    padding: '14px 16px',
-                    display: 'flex', alignItems: 'center', gap: 12,
-                    fontSize: 15, fontWeight: 800, color: C.textDark,
-                    opacity: !isConnected || isExecuting ? 0.55 : 1,
-                    textAlign: 'left',
-                    boxShadow: `2px 2px 0 ${C.textDark}`,
-                  }}
-                >
-                  <span style={{
-                    width: 28, height: 28, background: C.yellow,
-                    border: `2px solid ${C.textDark}`, borderRadius: '50%',
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 14, fontWeight: 900, flexShrink: 0,
-                  }}>{i + 1}</span>
-                  <span style={{ flex: 1 }}>{skill.label}</span>
-                </button>
-              ))
+              allSkills.map((skill, i) => {
+                // built-in 스킬은 i18n key (skill.{id}), custom 스킬은 학생이 붙인 이름 그대로
+                const isBuiltIn = !('createdAt' in skill);
+                const dictKey = `skill.${skill.id}`;
+                const translated = isBuiltIn ? t(dictKey) : skill.label;
+                const display = translated === dictKey ? skill.label : translated;
+                return (
+                  <button
+                    key={skill.id}
+                    onClick={() => onRunSkill(skill)}
+                    disabled={!isConnected || isExecuting}
+                    style={{
+                      fontFamily: 'inherit',
+                      cursor: isConnected && !isExecuting ? 'pointer' : 'not-allowed',
+                      background: SKILL_BG[i] ?? C.mint,
+                      border: `3px solid ${C.textDark}`, borderRadius: 14,
+                      padding: '14px 16px',
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      fontSize: 15, fontWeight: 800, color: C.textDark,
+                      opacity: !isConnected || isExecuting ? 0.55 : 1,
+                      textAlign: 'left',
+                      boxShadow: `2px 2px 0 ${C.textDark}`,
+                    }}
+                  >
+                    <span style={{
+                      width: 28, height: 28, background: C.yellow,
+                      border: `2px solid ${C.textDark}`, borderRadius: '50%',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 14, fontWeight: 900, flexShrink: 0,
+                    }}>{i + 1}</span>
+                    <span style={{ flex: 1 }}>{display}</span>
+                  </button>
+                );
+              })
             )}
           </div>
         </section>
@@ -387,10 +547,11 @@ export default function SimplePlayPage() {
         backgroundImage: `radial-gradient(circle, ${C.dotColor} 1.5px, transparent 1.5px)`,
         backgroundSize: '24px 24px',
         padding: '24px 36px',
-        display: 'flex', flexDirection: 'column', gap: 20,
+        display: 'flex', flexDirection: 'column',
+        minHeight: '100vh',
       }}>
         {/* ─── 상단 ─── */}
-        <header style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <header style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
           {/* 프로젝트 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: C.textDark }}>
@@ -419,6 +580,22 @@ export default function SimplePlayPage() {
           </div>
 
           <div style={{ flex: 1 }} />
+
+          {/* 🖐 손 동작 토글 */}
+          <button
+            onClick={() => setShowCamera((v) => !v)}
+            title={t('tool.gesture')}
+            style={{
+              fontFamily: 'inherit', cursor: 'pointer',
+              background: showCamera ? C.purple : '#fff',
+              color: showCamera ? '#fff' : C.textDark,
+              border: `2px solid ${C.textDark}`, borderRadius: '50%',
+              width: 38, height: 38, fontSize: 18,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            🖐
+          </button>
 
           {/* 언어 */}
           <div style={{ display: 'flex', gap: 4 }}>
@@ -469,15 +646,64 @@ export default function SimplePlayPage() {
           </div>
         </header>
 
-        {/* ─── 가운데 입력 박스 ─── */}
+        {/* 🚗 자동차 작품 시 조이스틱 자동 노출 (입력 박스 위) */}
+        {artwork === 'car_4wd' && (
+          <div style={{
+            background: '#fff', border: `3px solid ${C.textDark}`, borderRadius: 24,
+            padding: '16px 24px', display: 'flex', alignItems: 'center', gap: 20,
+            boxShadow: `3px 3px 0 ${C.textDark}`, marginBottom: 12,
+          }}>
+            <div style={{ flex: '0 0 auto' }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.textDark, marginBottom: 4 }}>
+                🕹 직접 조종
+              </div>
+              <div style={{ fontSize: 10, color: C.textMuted, lineHeight: 1.4 }}>
+                ⌨️ 화살표 키도 OK
+              </div>
+            </div>
+            <Joystick
+              onMove={onJoystickMove}
+              disabled={!isConnected}
+              colors={{
+                primary: C.purple,
+                primaryLight: C.pink,
+                border: C.textDark,
+                textMuted: C.textMuted,
+              }}
+            />
+          </div>
+        )}
+
+        {/* 🖐 카메라 제스처 (토글 ON 시) */}
+        {showCamera && (
+          <div style={{
+            background: '#fff', border: `3px solid ${C.textDark}`, borderRadius: 24,
+            padding: 12, marginBottom: 12, boxShadow: `3px 3px 0 ${C.textDark}`,
+          }}>
+            <CameraPanel
+              onGesture={onCameraGesture}
+              colors={{
+                primary: C.purple,
+                primaryDark: C.textDark,
+                primaryLight: C.pink,
+                border: C.textDark,
+                accent: C.yellow,
+                textMuted: C.textMuted,
+              }}
+            />
+          </div>
+        )}
+
+        {/* ─── 가운데 입력 박스 (마이크 버튼 우측 하단 통합) ─── */}
         <div style={{
           background: '#fff', border: `3px solid ${C.textDark}`, borderRadius: 24,
           padding: '24px 30px', minHeight: 220,
-          display: 'flex', flexDirection: 'column',
+          display: 'flex', flexDirection: 'column', position: 'relative',
           boxShadow: `3px 3px 0 ${C.textDark}`,
         }}>
           <textarea
             ref={textareaRef}
+            autoFocus
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={t('input.placeholder')}
@@ -493,6 +719,7 @@ export default function SimplePlayPage() {
               fontFamily: 'inherit', fontSize: 24, fontWeight: 800,
               color: C.purple, flex: 1, border: 'none', outline: 'none', resize: 'none',
               background: 'transparent', minHeight: 160, lineHeight: 1.4,
+              paddingRight: 56,   // 마이크 버튼 자리
             }}
           />
           {(isGenerating || isExecuting) && (
@@ -500,10 +727,30 @@ export default function SimplePlayPage() {
               {isGenerating ? `💭 ${t('send.thinking')}` : '▶ ...'}
             </div>
           )}
+          {/* 마이크 버튼 — 입력 박스 우측 하단 */}
+          <button
+            onClick={onMicToggle}
+            disabled={isGenerating || isExecuting}
+            title={listening ? t('mic.listening') : t('mic.start')}
+            style={{
+              fontFamily: 'inherit', cursor: 'pointer',
+              position: 'absolute', right: 16, bottom: 16,
+              background: listening ? C.purple : '#fff',
+              color: listening ? '#fff' : C.purple,
+              border: `2.5px solid ${C.textDark}`, borderRadius: '50%',
+              width: 44, height: 44, fontSize: 18,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none',
+              boxShadow: `2px 2px 0 ${C.textDark}`,
+            }}
+          >
+            🎤
+          </button>
         </div>
 
-        {/* ─── 하단 — 캐릭터 + 메시지 + 마이크 + 거리 ─── */}
+        {/* ─── 하단 — 캐릭터 + 메시지 + 마이크 + 거리 (화면 맨 아래 고정) ─── */}
         <div style={{
+          marginTop: 'auto',
           background: '#fff', border: `3px solid ${C.textDark}`, borderRadius: 24,
           padding: '18px 24px', display: 'flex', alignItems: 'center', gap: 14,
           boxShadow: `3px 3px 0 ${C.textDark}`,
@@ -523,24 +770,6 @@ export default function SimplePlayPage() {
           <div style={{ flex: 1, fontSize: 16, fontWeight: 700, color: C.greetingTeal, lineHeight: 1.4 }}>
             {micStatus || statusMessage || t('character.greeting')}
           </div>
-
-          {/* 마이크 */}
-          <button
-            onClick={onMicToggle}
-            disabled={isGenerating || isExecuting}
-            title={listening ? t('mic.listening') : t('mic.start')}
-            style={{
-              fontFamily: 'inherit', cursor: 'pointer', flexShrink: 0,
-              background: listening ? C.purple : '#fff',
-              color: listening ? '#fff' : C.purple,
-              border: `2.5px solid ${C.textDark}`, borderRadius: '50%',
-              width: 42, height: 42, fontSize: 18,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none',
-            }}
-          >
-            🎤
-          </button>
 
           {/* 거리센서 */}
           {isConnected && (
