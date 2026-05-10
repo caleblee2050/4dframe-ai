@@ -62,6 +62,7 @@ const ko: Dict = {
   'skill.viking_school_bell': '학교종에 맞춰',
   'skill.car_explore': '한 바퀴 탐험',
   'skill.crocodile_chomp': '으르렁 입 벌리기',
+  'skill.crocodile_jaws': '죠스가 다가온다',
   'skill.ballerina_musicbox': '오르골 발레리나',
   'skill.swing_round': '한 방향 회전',
 };
@@ -116,6 +117,7 @@ const en: Dict = {
   'skill.viking_school_bell': 'With School Bell Song',
   'skill.car_explore': 'Loop Around',
   'skill.crocodile_chomp': 'Open Wide & Chomp',
+  'skill.crocodile_jaws': 'Jaws Approaches',
   'skill.ballerina_musicbox': 'Music Box Ballerina',
   'skill.swing_round': 'Steady Spin',
 };
@@ -170,6 +172,7 @@ const mn: Dict = {
   'skill.viking_school_bell': 'Сургуулийн хонхтой хамт',
   'skill.car_explore': 'Эргэн тойрон судлах',
   'skill.crocodile_chomp': 'Аман нээж хазах',
+  'skill.crocodile_jaws': 'Аварга загас ойртож байна',
   'skill.ballerina_musicbox': 'Хөгжимт балерин',
   'skill.swing_round': 'Нэг чиглэлд эргэх',
 };

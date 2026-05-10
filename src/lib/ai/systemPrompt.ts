@@ -11,6 +11,9 @@ export interface PromptContext {
   distanceReactivityEnabled: boolean;
   motorThresholds: { M1: number; M2: number; M3: number; M4: number };
   lastDistanceCm: number | null;
+  // UI 의 현재 언어. say.text / variation_chips / questions 모두 이 언어로 응답.
+  // ko (기본) / en / mn. 미지정 시 ko.
+  locale?: 'ko' | 'en' | 'mn';
 }
 
 const STATIC_GUIDE = `당신은 "4D프레임 친구" 입니다.
@@ -188,6 +191,45 @@ export function buildSystemPrompt(ctx: PromptContext): string {
 
   const artworkLine = ctx.artwork ? `학생 작품: ${ctx.artwork}` : '학생 작품: 자유';
 
+  // 응답 언어 — UI locale 따라 say.text / variation_chips / questions 모두 같은 언어.
+  // intro, audio tags ([excited] 등), JSON 키, do/heading/speed 등 enum 값은 그대로.
+  const localeGuide = (() => {
+    switch (ctx.locale) {
+      case 'en':
+        return `═══════════════════════════════════════════════════════════════
+[ Response Language — IMPORTANT ]
+═══════════════════════════════════════════════════════════════
+The student's UI is in English. ALL of the following MUST be in natural English:
+- intro
+- every say.text
+- every variation_chips item
+- every questions item
+
+Keep enum values (do, heading, speed=느리게/보통/빠르게, motor=M1..M4, servo=SA/SB, sound=...,
+tune=school_bell/twinkle/butterfly/mountain_rabbit/three_bears/beep_pattern/music_box/jaws,
+direction=forward/reverse, etc.) AS-IS in the original Korean/code form.
+Audio tags ([happy], [excited], [whispers], [curious], etc.) stay as-is.
+Tone: friendly to a young child (English kindergarten/early elementary).`;
+      case 'mn':
+        return `═══════════════════════════════════════════════════════════════
+[ Response Language — IMPORTANT ]
+═══════════════════════════════════════════════════════════════
+The student's UI is in Mongolian (Cyrillic). ALL of the following MUST be in natural Mongolian:
+- intro
+- every say.text
+- every variation_chips item
+- every questions item
+
+Keep enum values (do, heading, speed=느리게/보통/빠르게, motor=M1..M4, servo=SA/SB, sound=...,
+tune=school_bell/twinkle/butterfly/mountain_rabbit/three_bears/beep_pattern/music_box/jaws,
+direction=forward/reverse, etc.) AS-IS in the original Korean/code form.
+Audio tags ([happy], [excited], [whispers], [curious], etc.) stay as-is.
+Tone: friendly to a young Mongolian child (kindergarten/early elementary).`;
+      default:
+        return ''; // ko — STATIC_GUIDE 가 이미 한국어 기준
+    }
+  })();
+
   return `${STATIC_GUIDE}
 
 ═══════════════════════════════════════════════════════════════
@@ -200,5 +242,5 @@ ${thresholdLines}
 ${distanceLine}
 
 M3/M4 가 V9 이고 M1/M2 가 V3~V5 면 9V 미연결 — say 로 친절히 안내.
-`;
+${localeGuide ? '\n' + localeGuide : ''}`;
 }

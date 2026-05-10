@@ -162,6 +162,59 @@ export const SKILLS: Skill[] = [
     },
   },
 
+  // ─────── 악어 + 죠스 음악 (긴장감 점증 + 마지막에 입 크게) ───────
+  {
+    id: 'crocodile_jaws',
+    artwork: 'crocodile',
+    label: '죠스가 다가온다',
+    emoji: '🦈',
+    description: '죠스 음악 긴장감 점증 + 음악 끝에 입 크게 벌리기 (음악-동작 sync)',
+    program: {
+      schema_version: 1,
+      artwork: 'crocodile',
+      intro: '[whispers]쉿... 죠스가 다가오고 있어...',
+      steps: [{ do: 'say', text: '[whispers]쉿... 죠스가 다가오고 있어...' }],
+      variation_chips: ['더 무섭게', '입만 크게', '꼬리도 흔들면서', '한 번 더'],
+    },
+    execute: async (ctx) => {
+      ctx.setStatus('🦈 쉿... 죠스가 다가와...');
+      await ctx.speak('[whispers]쉿... 죠스가 다가오고 있어...');
+      if (ctx.signal.aborted) return;
+
+      const totalMs = melodyDurationMs('jaws');
+      // 음악 시작 — 모터/서보는 잠깐 후 점진 시작
+      const musicPromise = ctx.playMelody('jaws');
+      const startedAt = Date.now();
+
+      // 음악 80% 까지는 입 미세 떨림 (긴장감)
+      const buildUpEnd = totalMs * 0.8;
+      let mouthOpen = false;
+      while (Date.now() - startedAt < buildUpEnd) {
+        if (ctx.signal.aborted) { await ctx.send('0'); return; }
+        // 작은 진폭 — SA ±15도 토글로 입 미세 떨림
+        await ctx.send(mouthOpen ? '5' : '%');
+        mouthOpen = !mouthOpen;
+        await ctx.delay(500);
+      }
+      // 마지막 20% — 클라이맥스 입 크게 벌림 + 효과음
+      ctx.setStatus('🦈 으르렁!!!');
+      ctx.playEffect('crocodile');
+      // SA 두 번 % (15도 ×2 = 30도 더) → 입 크게
+      await ctx.send('%');
+      await ctx.send('%');
+      await ctx.send('%');
+      await ctx.delay(400);
+      // 음악 끝까지 입 크게 벌린 채 대기
+      await musicPromise.catch(() => {});
+      // 입 다물기
+      await ctx.send('5');
+      await ctx.send('5');
+      await ctx.send('5');
+      ctx.setStatus('🦈 끝!');
+      await ctx.speak('[happy]휴, 살았다! 한 번 더?');
+    },
+  },
+
   // ─────── 발레리나 (오르골) ───────
   {
     id: 'ballerina_musicbox',

@@ -136,17 +136,13 @@ export default function SimplePlayPage() {
   useEffect(() => {
     if (artwork !== 'car_4wd' || !isConnectedEarly) return;
     const keys = new Set<string>();
-    // 키보드는 mag 0.55 (V5) 보통 속도 default — 조이스틱 끝까지 밀면 V9 풀파워.
-    // Shift 키 같이 누르면 mag=1 (V9, 빠름).
+    // 키보드는 단순 — V5 (보통 속도) 고정. 위치값 변속은 조이스틱 UI 만.
     const update = () => {
       const ax = (keys.has('ArrowRight') ? 1 : 0) + (keys.has('ArrowLeft') ? -1 : 0);
       const ay = (keys.has('ArrowDown') ? 1 : 0) + (keys.has('ArrowUp') ? -1 : 0);
       const len = Math.sqrt(ax * ax + ay * ay);
       if (len === 0) onJoystickMove(0, 0, 0);
-      else {
-        const mag = keys.has('Shift') ? 1 : 0.55;
-        onJoystickMove(ax / len, ay / len, mag);
-      }
+      else onJoystickMove(ax / len, ay / len, 0.55);
     };
     const isInputFocused = () => {
       const ae = document.activeElement;
@@ -154,15 +150,13 @@ export default function SimplePlayPage() {
       return tag === 'TEXTAREA' || tag === 'INPUT' || (ae as HTMLElement)?.isContentEditable;
     };
     const kd = (e: KeyboardEvent) => {
-      const arrow = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key);
-      if (!arrow && e.key !== 'Shift') return;
-      if (arrow && isInputFocused()) return;
-      if (arrow) e.preventDefault();
+      if (!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) return;
+      if (isInputFocused()) return;
+      e.preventDefault();
       if (!keys.has(e.key)) { keys.add(e.key); update(); }
     };
     const ku = (e: KeyboardEvent) => {
-      const arrow = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key);
-      if (!arrow && e.key !== 'Shift') return;
+      if (!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) return;
       if (keys.delete(e.key)) update();
     };
     const blur = () => { if (keys.size > 0) { keys.clear(); onJoystickMove(0, 0, 0); } };
@@ -244,6 +238,7 @@ export default function SimplePlayPage() {
         distanceReactivityEnabled: false,
         motorThresholds: cal.current.startThreshold,
         lastDistanceCm: board.lastDistanceCm,
+        locale,
       };
       const res = await fetch('/api/chat', {
         method: 'POST',
