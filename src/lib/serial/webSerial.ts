@@ -27,7 +27,7 @@ export interface BoardState {
 
 interface BoardActions {
   connect: () => Promise<void>;
-  connectBle: () => Promise<void>;
+  connectBle: (allDevices?: boolean) => Promise<void>;
   disconnect: () => Promise<void>;
   send: (payload: string) => Promise<void>;
   // 텍스트 명령 시퀀스를 한 줄씩 보낼 때 인터프리터가 호출
@@ -123,7 +123,9 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
 
   // 📶 Web Bluetooth — 모바일/PC 무선 연결. 보드의 JDY-23 BLE 모듈 (HM-10 호환).
   // iOS Safari/Chrome 미지원 (Apple). Android Chrome / 데스크톱 Chrome/Edge 만 가능.
-  connectBle: async () => {
+  // allDevices=false (기본): 좁힌 필터 — FFE0 service + 흔한 BLE serial 이름 prefix.
+  // allDevices=true: acceptAllDevices — 위 필터에 안 잡히는 경우 백업.
+  connectBle: async (allDevices = false) => {
     if (typeof navigator === 'undefined' || !('bluetooth' in navigator)) {
       set({ status: 'error', errorMessage: '이 브라우저는 Web Bluetooth 를 지원하지 않습니다. Android Chrome 또는 데스크톱 Chrome/Edge 를 사용해주세요. (iOS 는 미지원)' });
       return;
@@ -151,12 +153,24 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
 
     try {
       set({ status: 'requesting', errorMessage: null });
-      // acceptAllDevices 로 학생이 어떤 이름의 BLE 모듈이든 직접 선택 가능.
-      // optionalServices 에 명시해야 getPrimaryService 호출 가능.
-      const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true,
-        optionalServices: [BLE_SERVICE],
-      });
+      // 다이얼로그 후보 좁히기 — JDY-23/HM-10/MLT-BT05/BT05 등 BLE UART 모듈 매칭.
+      // filters 배열 = OR. service 광고하는 장치 + 흔한 이름 prefix 모두 포함.
+      // optionalServices 는 getPrimaryService 호출 가능하게 (필터와 별개).
+      const requestOptions: RequestDeviceOptions = allDevices
+        ? { acceptAllDevices: true, optionalServices: [BLE_SERVICE] }
+        : {
+            filters: [
+              { services: [BLE_SERVICE] },     // 표준 UART service 광고
+              { namePrefix: 'JDY' },            // JDY-23, JDY-23-XXXX
+              { namePrefix: 'BT' },             // BT05
+              { namePrefix: 'HM' },             // HM-10, HM-19
+              { namePrefix: 'MLT' },            // MLT-BT05
+              { namePrefix: 'Ami' },            // 펌웨어가 이름 설정한 경우
+              { namePrefix: '4D' },             // 4D Frame 같은
+            ],
+            optionalServices: [BLE_SERVICE],
+          };
+      const device = await navigator.bluetooth.requestDevice(requestOptions);
       _bleDevice = device;
 
       device.addEventListener('gattserverdisconnected', () => {

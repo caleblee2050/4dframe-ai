@@ -967,21 +967,23 @@ export default function PlayPage() {
                  board.status === 'opening' ? '연결 중…' : '🔌 USB'}
               </button>
               <button
-                onClick={() => {
-                  // 다이얼로그가 비어 있을 때 어디를 봐야 하는지 미리 안내
-                  void board.connectBle();
-                }}
+                onClick={() => void board.connectBle(false)}
                 title={
-                  '블루투스로 연결 (PC/안드로이드, iOS 미지원).\n\n' +
-                  '다이얼로그가 비어 있으면:\n' +
-                  '• 보드 BLE 모듈 LED 가 깜박이는지 (안 깜박이면 보드 전원/모듈 확인)\n' +
-                  '• OS 블루투스 켜져 있는지\n' +
-                  '• 윈도우: chrome://bluetooth-internals/#devices → Start Scan 으로 raw 검색 가능'
+                  'BLE 모듈만 좁혀서 검색 (JDY-23/HM-10/BT05/MLT-BT05).\n' +
+                  '다이얼로그가 비어 있으면 → 옆의 "📶 모두" 버튼으로 모든 장치 검색.'
                 }
                 style={{ ...btn(palette.accent, palette.textMain), padding: '8px 12px', fontSize: 13 }}
                 disabled={board.status === 'requesting' || board.status === 'opening'}
               >
                 📶 블루투스
+              </button>
+              <button
+                onClick={() => void board.connectBle(true)}
+                title="모든 BLE 장치 검색 (좁힌 필터에 안 잡힐 때 백업)"
+                style={{ ...btn(palette.tilePink, palette.textMain), padding: '8px 8px', fontSize: 11 }}
+                disabled={board.status === 'requesting' || board.status === 'opening'}
+              >
+                모두
               </button>
             </div>
           ) : (
