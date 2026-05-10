@@ -19,7 +19,8 @@ import { validateProgram, type Program } from '@/lib/dsl/schema';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
 import { useSoundStore, playEffect, speakText, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
 import { playMelody } from '@/lib/sound/melodySynth';
-import { GLOBAL, isV13Plus } from '@/lib/commands/commands';
+import { GLOBAL, isV13Plus, MOTORS } from '@/lib/commands/commands';
+import type { MotorId } from '@/lib/dsl/schema';
 import { useI18nStore } from '@/lib/i18n/store';
 import { LOCALES } from '@/lib/i18n/dict';
 import { Joystick } from '@/components/play/Joystick';
@@ -52,6 +53,7 @@ const C = {
 };
 
 const SKILL_BG = [C.orange, C.pink, C.mint];
+const MOTOR_IDS: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
 
 export default function SimplePlayPage() {
   // === Stores ===
@@ -68,6 +70,10 @@ export default function SimplePlayPage() {
   const [statusMessage, setStatusMessage] = useState('');
   const [history, setHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [projectOpen, setProjectOpen] = useState(false);
+  // 거리 반응 모드 — AI 가 거리센서 값에 반응하는 program 생성 가능 (sendPrompt context 에 전달)
+  const [distanceReactivity, setDistanceReactivity] = useState(false);
+  // 설정 모달 (부모용)
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // === Refs ===
   const abortRef = useRef<AbortController | null>(null);
@@ -238,7 +244,7 @@ export default function SimplePlayPage() {
     try {
       const ctx: PromptContext = {
         artwork,
-        distanceReactivityEnabled: false,
+        distanceReactivityEnabled: distanceReactivity,
         motorThresholds: cal.current.startThreshold,
         lastDistanceCm: board.lastDistanceCm,
         locale,
@@ -439,11 +445,53 @@ export default function SimplePlayPage() {
     return () => window.removeEventListener('pointerdown', onPointerDown);
   }, [projectOpen]);
 
-  // === Basic skill 명령 송신 (C/O/P) ===
+  // === Basic skill 명령 송신 (서보 ±15도) ===
   const onBasicCmd = async (cmd: string) => {
     if (!isConnected) { setStatusMessage('🔌 보드를 먼저 연결해주세요!'); return; }
     try { await board.send(cmd); } catch {}
   };
+
+  // === 설정 모달 — 모터 길들이기 / 서보 캘리브 / 거리 반응 ===
+  const onAdjustThreshold = (motor: MotorId, delta: 1 | -1) => {
+    const cur = cal.current.startThreshold[motor];
+    const next = Math.max(0, Math.min(9, cur + delta));
+    if (next !== cur) cal.setStartThreshold(motor, next);
+  };
+  const onTestStart = async (motor: MotorId) => {
+    if (!isConnected) return;
+    const cfg = MOTORS[motor];
+    const level = cal.current.startThreshold[motor];
+    await board.send(`X${cfg.pwmIndex}${level}`);
+    await new Promise((r) => setTimeout(r, 30));
+    await board.send(cfg.forwardByte);
+    setTimeout(() => { void board.send(GLOBAL.stopAll); }, 1000);
+  };
+  const onToggleDir = async (motor: MotorId) => {
+    if (isConnected) await board.send(MOTORS[motor].dirToggleSeq);
+    cal.toggleDir(motor);
+  };
+  // 서보 각도 (클라이언트 누적 추적)
+  const [servoA, setServoA] = useState(90);
+  const [servoB, setServoB] = useState(90);
+  const onServoAdjust = useCallback(async (axis: 'A' | 'B', delta: -15 | 15) => {
+    if (!isConnected) return;
+    const cmdChar = axis === 'A'
+      ? (delta > 0 ? '%' : '5')
+      : (delta > 0 ? '^' : '6');
+    try { await board.send(cmdChar); } catch {}
+    if (axis === 'A') setServoA((v) => Math.max(0, Math.min(180, v + delta)));
+    else setServoB((v) => Math.max(0, Math.min(180, v + delta)));
+  }, [isConnected, board]);
+  const onServoCenter = useCallback(async (axis: 'A' | 'B') => {
+    if (!isConnected) return;
+    const cur = axis === 'A' ? servoA : servoB;
+    const diff = 90 - cur;
+    const steps = Math.round(diff / 15);
+    for (let i = 0; i < Math.abs(steps); i++) {
+      await onServoAdjust(axis, steps > 0 ? 15 : -15);
+      await new Promise((r) => setTimeout(r, 80));
+    }
+  }, [isConnected, servoA, servoB, onServoAdjust]);
 
   return (
     <div className="thinkgen-simple">
@@ -492,22 +540,21 @@ export default function SimplePlayPage() {
           </div>
         </section>
 
-        {/* 화면 하단 — AI 기본 스킬 */}
+        {/* 화면 하단 — AI 기본 스킬 (서보 ±15° 두 버튼) */}
         <section style={{ marginTop: 'auto' }}>
           <h2 className="tg-section-title">{t('skills.basic')}</h2>
           <div className="tg-basic-card">
             {[
-              { key: 'C', label: t('basic.openMouth'),  cmd: '%' },
-              { key: 'O', label: t('basic.closeMouth'), cmd: '5' },
-              { key: 'P', label: t('basic.startGame'),  cmd: 'W' },
+              { id: 'open',  label: t('basic.openMouth'),  cmd: '%', emoji: '😮' },
+              { id: 'close', label: t('basic.closeMouth'), cmd: '5', emoji: '😐' },
             ].map((b) => (
               <button
-                key={b.key}
+                key={b.id}
                 className="tg-basic-btn"
                 onClick={() => void onBasicCmd(b.cmd)}
                 disabled={!isConnected}
               >
-                <span className="tg-basic-key">{b.key}</span>
+                <span className="tg-basic-key" style={{ fontSize: 18 }}>{b.emoji}</span>
                 <span>{b.label}</span>
               </button>
             ))}
@@ -702,13 +749,51 @@ export default function SimplePlayPage() {
             {micStatus || statusMessage || t('character.greeting')}
           </div>
 
-          {/* 거리센서 */}
-          {isConnected && (
-            <div className="tg-distance-pill" title="거리센서">
-              👀
-              <span>{board.lastDistanceCm ?? '—'}</span>
-            </div>
-          )}
+          {/* 우측 하단 — 거리센서 토글 + 설정 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* 거리센서 토글 — 클릭 시 ON/OFF (AI 가 거리에 반응할지 결정) */}
+            <button
+              onClick={() => setDistanceReactivity((v) => !v)}
+              disabled={!isConnected}
+              title={
+                !isConnected ? '보드 미연결' :
+                distanceReactivity ? '거리 반응 모드 ON — AI 가 거리에 반응. 클릭하면 끔' :
+                '거리 반응 모드 OFF — 클릭하면 켬'
+              }
+              style={{
+                fontFamily: 'inherit', cursor: isConnected ? 'pointer' : 'not-allowed',
+                background: distanceReactivity ? C.purple : '#fff',
+                color: distanceReactivity ? '#fff' : C.textDark,
+                border: `2.5px solid ${C.textDark}`, borderRadius: 22,
+                padding: '8px 14px', fontSize: 18, fontWeight: 800,
+                display: 'flex', alignItems: 'center', gap: 6,
+                opacity: isConnected ? 1 : 0.45,
+                boxShadow: distanceReactivity ? `2px 2px 0 ${C.textDark}` : 'none',
+              }}
+            >
+              <span>{distanceReactivity ? '👀' : '🙈'}</span>
+              {isConnected && (
+                <span style={{ fontSize: 13, fontWeight: 700 }}>
+                  {board.lastDistanceCm ?? '—'}
+                </span>
+              )}
+            </button>
+
+            {/* 설정 (부모용) */}
+            <button
+              onClick={() => setSettingsOpen(true)}
+              title="설정 (모터 길들이기 / 서보 캘리브 / 어른용)"
+              style={{
+                fontFamily: 'inherit', cursor: 'pointer',
+                background: '#fff', color: C.textDark,
+                border: `2.5px solid ${C.textDark}`, borderRadius: '50%',
+                width: 44, height: 44, fontSize: 20,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              ⚙️
+            </button>
+          </div>
         </div>
 
         {/* 키프레임 */}
@@ -719,6 +804,148 @@ export default function SimplePlayPage() {
           }
         `}</style>
       </main>
+
+      {/* ⚙️ 설정 모달 — 부모용 */}
+      {settingsOpen && (
+        <div
+          onClick={() => setSettingsOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: C.mainBg, border: `4px solid ${C.textDark}`, borderRadius: 24,
+              padding: 24, maxWidth: 720, width: '100%', maxHeight: '90vh', overflowY: 'auto',
+              boxShadow: `4px 4px 0 ${C.textDark}`,
+              display: 'flex', flexDirection: 'column', gap: 20,
+            }}
+          >
+            {/* 헤더 */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: C.textDark }}>
+                ⚙️ {t('settings.title').replace('⚙️ ', '')}
+              </h2>
+              <button
+                onClick={() => setSettingsOpen(false)}
+                style={{
+                  fontFamily: 'inherit', cursor: 'pointer',
+                  background: '#fff', border: `2px solid ${C.textDark}`, borderRadius: '50%',
+                  width: 36, height: 36, fontSize: 16, fontWeight: 900, color: C.textDark,
+                }}
+              >✕</button>
+            </div>
+
+            {/* 거리 반응 모드 */}
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              background: distanceReactivity ? C.mint : '#fff',
+              border: `3px solid ${C.textDark}`, borderRadius: 16,
+              padding: '12px 16px', cursor: 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={distanceReactivity}
+                onChange={(e) => setDistanceReactivity(e.target.checked)}
+                style={{ width: 20, height: 20, cursor: 'pointer' }}
+              />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.textDark }}>
+                  👀 {t('settings.distanceReact')}
+                </div>
+                <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                  AI 가 거리에 반응하는 동작 만듦 — 가까이 오면 멈춤 등
+                </div>
+              </div>
+            </label>
+
+            {/* 모터 길들이기 */}
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4, color: C.textDark }}>
+                🔧 {t('settings.motorCalib')}
+              </div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10 }}>
+                ▶ 시동 눌러보고, 안 돌면 + 로 한 칸씩 올려보세요.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
+                {MOTOR_IDS.map((id) => {
+                  const dir = cal.current.dirOverride[id];
+                  const v = cal.current.startThreshold[id];
+                  return (
+                    <div key={id} style={{
+                      background: dir === 1 ? C.mint : C.pink,
+                      border: `3px solid ${C.textDark}`, borderRadius: 12,
+                      padding: 10, gap: 6,
+                      display: 'flex', flexDirection: 'column',
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                        <span style={{ fontWeight: 900, fontSize: 14, color: C.textDark }}>{id}</span>
+                        <button
+                          onClick={() => void onToggleDir(id)}
+                          style={{
+                            fontFamily: 'inherit', fontWeight: 700, fontSize: 10,
+                            background: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6,
+                            padding: '2px 5px', cursor: 'pointer', color: C.textDark,
+                          }}
+                        >{dir === 1 ? '정' : '역'}</button>
+                      </div>
+                      <div style={{ textAlign: 'center', fontSize: 10, color: C.textMuted, marginTop: 2 }}>시동</div>
+                      <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 22, lineHeight: 1, color: C.textDark }}>V{v}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                        <button onClick={() => onAdjustThreshold(id, -1)} disabled={v <= 0}
+                          style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6, padding: '3px 0', cursor: 'pointer', opacity: v <= 0 ? 0.4 : 1, color: C.textDark }}>−</button>
+                        <button onClick={() => onAdjustThreshold(id, +1)} disabled={v >= 9}
+                          style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6, padding: '3px 0', cursor: 'pointer', opacity: v >= 9 ? 0.4 : 1, color: C.textDark }}>+</button>
+                      </div>
+                      <button onClick={() => void onTestStart(id)} disabled={!isConnected || isExecuting}
+                        style={{ fontFamily: 'inherit', fontWeight: 800, fontSize: 11, background: C.purple, color: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6, padding: '5px 0', cursor: 'pointer', opacity: (!isConnected || isExecuting) ? 0.5 : 1 }}>
+                        ▶ 시동
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 서보 각도 */}
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4, color: C.textDark }}>
+                🎯 {t('settings.servoCalib')}
+              </div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10 }}>
+                악어 입(SA), 꼬리(SB) ±15° 단위. 90° = 중립.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {([
+                  { axis: 'A' as const, label: 'SA — 악어 입', value: servoA },
+                  { axis: 'B' as const, label: 'SB — 꼬리', value: servoB },
+                ]).map(({ axis, label, value }) => (
+                  <div key={axis} style={{
+                    background: C.pink, border: `3px solid ${C.textDark}`, borderRadius: 12,
+                    padding: 10, gap: 6, display: 'flex', flexDirection: 'column',
+                  }}>
+                    <div style={{ fontSize: 11, color: C.textMuted, lineHeight: 1.3 }}>{label}</div>
+                    <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 26, lineHeight: 1, color: C.textDark }}>{value}°</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                      <button onClick={() => void onServoAdjust(axis, -15)} disabled={!isConnected || value <= 0}
+                        style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6, padding: '4px 0', cursor: 'pointer', opacity: (!isConnected || value <= 0) ? 0.4 : 1, color: C.textDark }}>−15°</button>
+                      <button onClick={() => void onServoAdjust(axis, +15)} disabled={!isConnected || value >= 180}
+                        style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6, padding: '4px 0', cursor: 'pointer', opacity: (!isConnected || value >= 180) ? 0.4 : 1, color: C.textDark }}>+15°</button>
+                    </div>
+                    <button onClick={() => void onServoCenter(axis)} disabled={!isConnected || value === 90}
+                      style={{ fontFamily: 'inherit', fontWeight: 800, fontSize: 11, background: C.purple, color: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6, padding: '5px 0', cursor: 'pointer', opacity: (!isConnected || value === 90) ? 0.5 : 1 }}>
+                      90° 중앙
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
