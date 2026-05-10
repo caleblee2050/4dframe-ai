@@ -240,10 +240,12 @@ export default function SimplePlayPage() {
         lastDistanceCm: board.lastDistanceCm,
         locale,
       };
+      // 최근 8턴만 보냄 (context 부풀어서 응답 끊기는 문제 방지)
+      const recentHistory = history.slice(-8);
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: trimmed, context: ctx, history }),
+        body: JSON.stringify({ prompt: trimmed, context: ctx, history: recentHistory }),
       });
       if (!res.ok || !res.body) throw new Error(`AI ${res.status}`);
       const reader = res.body.getReader();
@@ -255,9 +257,18 @@ export default function SimplePlayPage() {
         acc += decoder.decode(value, { stream: true });
       }
       const cleaned = acc.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-      const parsed = JSON.parse(cleaned);
+      if (!cleaned) {
+        throw new Error('AI 가 응답을 안 줬어요. 다시 시도해 주세요.');
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch (jsonErr) {
+        throw new Error(`AI 응답 형식 오류 — 다시 시도해주세요. (${(jsonErr as Error).message})`);
+      }
       const valid = validateProgram(parsed);
-      setHistory([...newHistory, { role: 'assistant', content: cleaned }]);
+      // history 도 누적 8턴까지만 유지
+      setHistory([...newHistory, { role: 'assistant' as const, content: cleaned }].slice(-16));
       void prefetchProgramAudio(valid);
       // 자동 실행
       setTimeout(() => void executeProgram(valid), 150);
@@ -291,6 +302,7 @@ export default function SimplePlayPage() {
         playEffect(sound as Parameters<typeof playEffect>[0], 1.0);
       },
       setStatus: (text: string) => setStatusMessage(text),
+      t: (key: string) => useI18nStore.getState().t(key),
     };
     try {
       await skill.execute(ctx);

@@ -65,6 +65,13 @@ const ko: Dict = {
   'skill.crocodile_jaws': '죠스가 다가온다',
   'skill.ballerina_musicbox': '오르골 발레리나',
   'skill.swing_round': '한 방향 회전',
+  // 스킬 executor 의 say 텍스트 (음성 합성용)
+  'skill.viking_school_bell.intro': '[happy]노래에 맞춰 흔들거야!',
+  'skill.viking_school_bell.outro': '[excited]노래랑 같이 흔들렸지? 한 번 더?',
+  'skill.ballerina_musicbox.intro': '[happy]태엽 풀어줄게!',
+  'skill.ballerina_musicbox.outro': '[curious]태엽 다 풀렸네... 다시 감을까?',
+  'skill.crocodile_jaws.intro': '[whispers]쉿... 죠스가 다가오고 있어...',
+  'skill.crocodile_jaws.outro': '[happy]휴, 살았다! 한 번 더?',
 };
 
 const en: Dict = {
@@ -120,6 +127,12 @@ const en: Dict = {
   'skill.crocodile_jaws': 'Jaws Approaches',
   'skill.ballerina_musicbox': 'Music Box Ballerina',
   'skill.swing_round': 'Steady Spin',
+  'skill.viking_school_bell.intro': '[happy]Let\'s swing to the song!',
+  'skill.viking_school_bell.outro': '[excited]We swung along with the song! One more time?',
+  'skill.ballerina_musicbox.intro': '[happy]Winding up the music box!',
+  'skill.ballerina_musicbox.outro': '[curious]The music box has wound down... shall we wind it again?',
+  'skill.crocodile_jaws.intro': '[whispers]Shh... the shark is coming closer...',
+  'skill.crocodile_jaws.outro': '[happy]Phew, we\'re safe! One more time?',
 };
 
 const mn: Dict = {
@@ -175,6 +188,12 @@ const mn: Dict = {
   'skill.crocodile_jaws': 'Аварга загас ойртож байна',
   'skill.ballerina_musicbox': 'Хөгжимт балерин',
   'skill.swing_round': 'Нэг чиглэлд эргэх',
+  'skill.viking_school_bell.intro': '[happy]Дуунд тааруулан найгуулъя!',
+  'skill.viking_school_bell.outro': '[excited]Дуутай хамт найгуулсан биз дээ? Дахиад нэг удаа?',
+  'skill.ballerina_musicbox.intro': '[happy]Хөгжмийн хайрцгийг ороож байна!',
+  'skill.ballerina_musicbox.outro': '[curious]Хөгжмийн хайрцаг тайлагдчихлаа... дахин ороолгох уу?',
+  'skill.crocodile_jaws.intro': '[whispers]Шшш... аварга загас ойртож байна...',
+  'skill.crocodile_jaws.outro': '[happy]Уха, аврагдлаа! Дахиад нэг удаа?',
 };
 
 const dicts: Record<Locale, Dict> = { ko, en, mn };

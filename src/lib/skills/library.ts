@@ -20,6 +20,8 @@ export interface SkillExecutor {
   playMelody: (tune: string) => Promise<void>;
   playEffect: (sound: string) => void;
   setStatus: (text: string) => void;
+  // i18n — 현재 locale 의 사전에서 키 찾기. 미정의면 ko fallback. 그것도 없으면 key 자체 반환.
+  t: (key: string) => string;
 }
 
 export interface Skill {
@@ -80,8 +82,9 @@ export const SKILLS: Skill[] = [
     },
     // 음악-동작 정확 sync — 음악 길이만큼 좌우 흔들기, 음악 끝 = 모터 정지.
     execute: async (ctx) => {
-      ctx.setStatus('🔔 노래에 맞춰 흔들거야!');
-      await ctx.speak('[happy]노래에 맞춰 흔들거야!');
+      const intro = ctx.t('skill.viking_school_bell.intro');
+      ctx.setStatus('🔔 ' + intro.replace(/\[[^\]]+\]/g, ''));
+      await ctx.speak(intro);
       if (ctx.signal.aborted) return;
 
       const totalMs = melodyDurationMs('school_bell');
@@ -104,8 +107,8 @@ export const SKILLS: Skill[] = [
       }
       await ctx.send('0');
       await musicPromise.catch(() => {});
-      ctx.setStatus('🔔 끝!');
-      await ctx.speak('[excited]노래랑 같이 흔들렸지? 한 번 더?');
+      ctx.setStatus('🔔 ✓');
+      await ctx.speak(ctx.t('skill.viking_school_bell.outro'));
     },
   },
 
@@ -177,8 +180,9 @@ export const SKILLS: Skill[] = [
       variation_chips: ['더 무섭게', '입만 크게', '꼬리도 흔들면서', '한 번 더'],
     },
     execute: async (ctx) => {
-      ctx.setStatus('🦈 쉿... 죠스가 다가와...');
-      await ctx.speak('[whispers]쉿... 죠스가 다가오고 있어...');
+      const intro = ctx.t('skill.crocodile_jaws.intro');
+      ctx.setStatus('🦈 ' + intro.replace(/\[[^\]]+\]/g, ''));
+      await ctx.speak(intro);
       if (ctx.signal.aborted) return;
 
       const totalMs = melodyDurationMs('jaws');
@@ -210,8 +214,8 @@ export const SKILLS: Skill[] = [
       await ctx.send('5');
       await ctx.send('5');
       await ctx.send('5');
-      ctx.setStatus('🦈 끝!');
-      await ctx.speak('[happy]휴, 살았다! 한 번 더?');
+      ctx.setStatus('🦈 ✓');
+      await ctx.speak(ctx.t('skill.crocodile_jaws.outro'));
     },
   },
 
@@ -236,9 +240,10 @@ export const SKILLS: Skill[] = [
     //   - 진행률 0~1 동안 V9 → V2 linear 감속
     //   - 음악 끝 = 회전 끝 (정지 명령) — 같은 timestamp.
     execute: async (ctx) => {
-      ctx.setStatus('🩰 오르골 풀어줄게!');
+      const intro = ctx.t('skill.ballerina_musicbox.intro');
+      ctx.setStatus('🩰 ' + intro.replace(/\[[^\]]+\]/g, ''));
       // ① 짧은 인사말 — 음악 시작 전에 끝냄 (음악 위에 안 겹치도록)
-      await ctx.speak('[happy]태엽 풀어줄게!');
+      await ctx.speak(intro);
       if (ctx.signal.aborted) return;
 
       // ② 음악 길이 정확 측정 (BASE_BEAT_MS 기반, 정확)
@@ -271,8 +276,8 @@ export const SKILLS: Skill[] = [
       // ⑥ 음악 끝 == 회전 끝. 정지 + 음악 마무리 await
       await ctx.send('0');
       await musicPromise.catch(() => {});
-      ctx.setStatus('🩰 끝!');
-      await ctx.speak('[curious]태엽 다 풀렸네... 다시 감을까?');
+      ctx.setStatus('🩰 ✓');
+      await ctx.speak(ctx.t('skill.ballerina_musicbox.outro'));
     },
   },
 

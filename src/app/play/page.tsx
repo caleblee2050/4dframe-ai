@@ -22,6 +22,7 @@ import { MOTORS, GLOBAL } from '@/lib/commands/commands';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
 import { useSoundStore, playEffect, speakText, stopSpeaking, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
 import { playMelody } from '@/lib/sound/melodySynth';
+import { useI18nStore } from '@/lib/i18n/store';
 
 const MOTOR_IDS: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
 
@@ -410,6 +411,7 @@ export default function PlayPage() {
           return [...s, { text, ts: Date.now() }];
         });
       },
+      t: (key: string) => useI18nStore.getState().t(key),
     };
     try {
       await skill.execute(ctx);
