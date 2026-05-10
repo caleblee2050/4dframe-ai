@@ -113,13 +113,17 @@ export function CameraPanel({ onGesture, colors }: Props) {
         const lm = result.landmarks?.[0];
         if (lm && lm.length >= 21 && mode === 'hand') {
           const openness = computeHandOpenness(lm);
-          const fingerCount = countFingers(lm);
+          const mask = fingerMask(lm);
+          const fingerCount = mask.filter(Boolean).length;
           drawHand(canvasRef.current, lm);
           // 200ms throttle
           if (ts - lastSendAt > 200) {
             lastSendAt = ts;
             onGesture({ type: 'hand', openness, fingerCount });
-            setStatus(`손가락 ${fingerCount}개 · 펼침 ${(openness * 100).toFixed(0)}%`);
+            // 디버그용 — 어느 손가락이 펴진 걸로 잡혔는지 시각적 표시
+            const labels = ['👍','☝️','🖕','💍','🤙'];
+            const visual = mask.map((b, i) => b ? labels[i] : '·').join(' ');
+            setStatus(`손가락 ${fingerCount}개 · ${visual} · 펼침 ${(openness * 100).toFixed(0)}%`);
           }
         } else if (mode === 'head') {
           // 단순 모드 — 카메라 픽셀 색 분석으로 머리 위치 추정 (간이). MediaPipe FaceLandmarker 도입은 v0.1
@@ -195,36 +199,51 @@ function computeHandOpenness(landmarks: Lm[]): number {
   return Math.max(0, Math.min(1, (avg - 0.1) / 0.25));
 }
 
-// 펴진 손가락 개수 (0~5).
-// 4 손가락 (검지/중지/약지/새끼) + 엄지 별도 처리.
-// 판정: tip 의 mcp 거리 > pip 의 mcp 거리 ×1.3 면 펴짐 (관절 각도 대용).
-function isExtended(lm: Lm[], tip: number, pip: number, mcp: number): boolean {
-  const t = lm[tip], p = lm[pip], m = lm[mcp];
-  if (!t || !p || !m) return false;
-  const tipDist = Math.hypot(t.x - m.x, t.y - m.y);
-  const pipDist = Math.hypot(p.x - m.x, p.y - m.y);
-  return tipDist > pipDist * 1.3;
+// 손가락 펴짐 판정 — 3D 관절 각도 (z 좌표 포함).
+// MCP→PIP 와 PIP→TIP 두 벡터의 3D dot product (cos).
+// 펴진 손가락 = 두 벡터 같은 방향 (cos ≈ 1).
+// 굽은 손가락 = 두 벡터 꺾임 (cos < 0.5).
+// z 포함이라 손가락이 카메라 쪽/반대쪽으로 굽어도 정확히 검출 (2D 투영 무관).
+function jointCos(lm: Lm[], a: number, b: number, c: number): number {
+  const pa = lm[a], pb = lm[b], pc = lm[c];
+  if (!pa || !pb || !pc) return -1;
+  const az = pa.z ?? 0, bz = pb.z ?? 0, cz = pc.z ?? 0;
+  const v1x = pb.x - pa.x, v1y = pb.y - pa.y, v1z = bz - az;
+  const v2x = pc.x - pb.x, v2y = pc.y - pb.y, v2z = cz - bz;
+  const m1 = Math.hypot(v1x, v1y, v1z);
+  const m2 = Math.hypot(v2x, v2y, v2z);
+  if (m1 < 0.001 || m2 < 0.001) return -1;
+  return (v1x * v2x + v1y * v2y + v1z * v2z) / (m1 * m2);
+}
+
+// 엄지는 IP 가 거의 안 굽고 MCP 축에서만 굽으므로 3D 각도로도 한계.
+// 대신 3D 거리 — tip 이 검지 base 에서 엄지 mcp 보다 충분히 멀리 있으면 펴짐.
+function isThumbExt(lm: Lm[]): boolean {
+  const tip = lm[4], mcp = lm[2], indexMcp = lm[5];
+  if (!tip || !mcp || !indexMcp) return false;
+  const d3 = (a: Lm, b: Lm) =>
+    Math.hypot(a.x - b.x, a.y - b.y, (a.z ?? 0) - (b.z ?? 0));
+  const tipToIdx = d3(tip, indexMcp);
+  const mcpToIdx = d3(mcp, indexMcp);
+  if (mcpToIdx < 0.001) return false;
+  return tipToIdx > mcpToIdx * 1.2;
+}
+
+// 5 손가락 펴짐 마스크 [엄지, 검지, 중지, 약지, 새끼]
+// 검지~새끼: 3D dot product cos > 0.5 (두 벡터 60도 이내) 면 펴짐.
+function fingerMask(lm: Lm[]): boolean[] {
+  if (!lm || lm.length < 21) return [false, false, false, false, false];
+  return [
+    isThumbExt(lm),
+    jointCos(lm, 5, 6, 8) > 0.5,    // 검지
+    jointCos(lm, 9, 10, 12) > 0.5,  // 중지
+    jointCos(lm, 13, 14, 16) > 0.5, // 약지
+    jointCos(lm, 17, 18, 20) > 0.5, // 새끼
+  ];
 }
 
 function countFingers(lm: Lm[]): number {
-  if (!lm || lm.length < 21) return 0;
-  let n = 0;
-  // index 5(mcp), 6(pip), 8(tip)
-  if (isExtended(lm, 8, 6, 5)) n++;
-  // middle 9, 10, 12
-  if (isExtended(lm, 12, 10, 9)) n++;
-  // ring 13, 14, 16
-  if (isExtended(lm, 16, 14, 13)) n++;
-  // pinky 17, 18, 20
-  if (isExtended(lm, 20, 18, 17)) n++;
-  // thumb 2, 3, 4 — 측면이라 상대적 검사. tip(4) 이 wrist(0) 에서 멀고 ip(3) 보다 더 멀면 펴짐.
-  const t = lm[4], i = lm[3], w = lm[0];
-  if (t && i && w) {
-    const tw = Math.hypot(t.x - w.x, t.y - w.y);
-    const iw = Math.hypot(i.x - w.x, i.y - w.y);
-    if (tw > iw * 1.1) n++;
-  }
-  return n;
+  return fingerMask(lm).filter(Boolean).length;
 }
 
 function drawHand(canvas: HTMLCanvasElement | null, landmarks: Lm[]) {

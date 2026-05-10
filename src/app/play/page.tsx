@@ -618,6 +618,7 @@ export default function PlayPage() {
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // 작품 변경 시 이전 작품 메시지/프로그램/입력 초기화 (이전 멘트가 남는 버그 fix).
+  // 자동차 작품 진입 시 직접 조종 자동 ON — OFF 누르면 카드/키보드 모두 진짜 꺼지도록 SSoT 일원화.
   const onArtworkChange = useCallback((next: PromptContext['artwork']) => {
     if (artwork === next) return;
     abortRef.current?.abort();
@@ -626,6 +627,7 @@ export default function PlayPage() {
     setInput('');
     setSayMessages([]);
     setCurrentStepIndex(null);
+    if (next === 'car_4wd') setShowJoystick(true);
   }, [artwork]);
 
   // /play/identify 페이지에서 ?artwork=xxx 로 돌아오면 자동 선택. (window.location 으로 SSR 우회)
@@ -634,6 +636,7 @@ export default function PlayPage() {
     const a = new URLSearchParams(window.location.search).get('artwork');
     if (a && (['viking','car_4wd','swing','crocodile','ballerina','free'] as const).includes(a as never)) {
       setArtwork(a as PromptContext['artwork']);
+      if (a === 'car_4wd') setShowJoystick(true);
     }
   }, []);
 
@@ -740,7 +743,7 @@ export default function PlayPage() {
   // ⌨️ 키보드 화살표 → 조이스틱 — 직접 조종 ON 또는 자동차 작품 시 활성.
   // textarea/input focus 중에는 무시 (입력 방해 X).
   useEffect(() => {
-    const joystickActive = showJoystick || artwork === 'car_4wd';
+    const joystickActive = showJoystick;
     if (!joystickActive || !isConnected) return;
 
     const keysPressed = new Set<string>();
@@ -1034,8 +1037,8 @@ export default function PlayPage() {
           </button>
         </section>
 
-        {/* 🕹 직접 조종 — 토글 ON 시 또는 자동차 작품 시 노출 (차동 조향). */}
-        {(showJoystick || artwork === 'car_4wd') && (
+        {/* 🕹 직접 조종 — 토글 ON 시 노출 (자동차 작품 진입 시 자동 ON, OFF 누르면 진짜 꺼짐). */}
+        {showJoystick && (
           <section style={{ ...card, display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap' }}>
             <div>
               <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 4 }}>🕹 직접 조종</div>
