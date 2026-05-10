@@ -27,6 +27,7 @@ export interface BoardState {
 
 interface BoardActions {
   connect: () => Promise<void>;
+  connectBle: () => Promise<void>;
   disconnect: () => Promise<void>;
   send: (payload: string) => Promise<void>;
   // 텍스트 명령 시퀀스를 한 줄씩 보낼 때 인터프리터가 호출
@@ -34,10 +35,20 @@ interface BoardActions {
 
 const MAX_LINES = 100;
 
+// === USB Serial transport ===
 let _port: SerialPort | null = null;
 let _writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
 let _readAbort: AbortController | null = null;
 let _readLoopPromise: Promise<void> | null = null;
+
+// === BLE (JDY-23 / HM-10 호환) transport ===
+// JDY-23 은 HM-10 과 같은 transparent UART characteristic 사용.
+// Service UUID 0000ffe0-... / Characteristic 0000ffe1-... (read/write/notify).
+const BLE_SERVICE = 0xffe0;
+const BLE_CHAR = 0xffe1;
+let _bleDevice: BluetoothDevice | null = null;
+let _bleChar: BluetoothRemoteGATTCharacteristic | null = null;
+let _bleBuffer = '';   // notification 데이터 누적 (개행 단위 split)
 
 const encoder = new TextEncoder();
 
@@ -110,22 +121,125 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
     }
   },
 
+  // 📶 Web Bluetooth — 모바일/PC 무선 연결. 보드의 JDY-23 BLE 모듈 (HM-10 호환).
+  // iOS Safari/Chrome 미지원 (Apple). Android Chrome / 데스크톱 Chrome/Edge 만 가능.
+  connectBle: async () => {
+    if (typeof navigator === 'undefined' || !('bluetooth' in navigator)) {
+      set({ status: 'error', errorMessage: '이 브라우저는 Web Bluetooth 를 지원하지 않습니다. Android Chrome 또는 데스크톱 Chrome/Edge 를 사용해주세요. (iOS 는 미지원)' });
+      return;
+    }
+    if (get().status === 'connected') return;
+
+    try {
+      set({ status: 'requesting', errorMessage: null });
+      // acceptAllDevices 로 학생이 어떤 이름의 BLE 모듈이든 직접 선택 가능.
+      // optionalServices 에 명시해야 getPrimaryService 호출 가능.
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [BLE_SERVICE],
+      });
+      _bleDevice = device;
+
+      device.addEventListener('gattserverdisconnected', () => {
+        _bleChar = null;
+        _bleDevice = null;
+        _bleBuffer = '';
+        useBoardStore.setState({ status: 'idle', errorMessage: '블루투스 연결이 끊어졌어요.' });
+      });
+
+      set({ status: 'opening' });
+      const server = await device.gatt!.connect();
+      const service = await server.getPrimaryService(BLE_SERVICE);
+      const char = await service.getCharacteristic(BLE_CHAR);
+      _bleChar = char;
+
+      await char.startNotifications();
+      char.addEventListener('characteristicvaluechanged', onBleNotification);
+
+      set({ status: 'connected' });
+
+      // 진단 명령 자동 발사 (BOOT 못 받았을 때 ID/FW 채우기)
+      setTimeout(() => {
+        void bleSend('?').catch(() => {});
+      }, 500);
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      let msg = raw;
+      if (raw.includes('User cancelled') || raw.includes('chooser cancelled')) {
+        msg = '블루투스 장치 선택이 취소됐어요. 다시 눌러 주세요.';
+      } else if (raw.includes('No Services matching') || raw.includes('SecurityError')) {
+        msg = '이 BLE 장치는 표준 UART 서비스(0xFFE0)가 없어요. JDY-23 / HM-10 모듈인지 확인해 주세요.';
+      } else if (raw.includes('GATT')) {
+        msg = `${raw}\n\n👉 보드 전원이 켜져 있고 BLE 모듈 LED 가 깜박이는지 확인해 주세요.`;
+      }
+      set({ status: 'error', errorMessage: msg });
+      await safeBleCleanup();
+    }
+  },
+
   disconnect: async () => {
     set({ status: 'closing' });
     await safeCleanup();
+    await safeBleCleanup();
     set({ status: 'idle', errorMessage: null });
   },
 
   send: async (payload: string) => {
-    if (!_writer) {
-      throw new Error('보드가 연결되지 않았습니다. 먼저 연결 버튼을 눌러주세요.');
+    // USB 가 우선 — 둘 다 연결돼 있으면 USB 가 먼저.
+    if (_writer) {
+      if (typeof window !== 'undefined') console.log('[serial→]', JSON.stringify(payload));
+      await _writer.write(encoder.encode(payload));
+      return;
     }
-    // 디버그: 자연어 모드에서 어떤 V/W/A/S/D/숫자 명령이 보드에 가는지 dev tools 에서 추적용.
-    // (성능 영향 미미 — payload 가 1~3 글자 단위)
-    if (typeof window !== 'undefined') console.log('[serial→]', JSON.stringify(payload));
-    await _writer.write(encoder.encode(payload));
+    if (_bleChar) {
+      if (typeof window !== 'undefined') console.log('[ble→]', JSON.stringify(payload));
+      await bleSend(payload);
+      return;
+    }
+    throw new Error('보드가 연결되지 않았습니다. 먼저 연결 버튼을 눌러주세요.');
   },
 }));
+
+// BLE write — characteristic 의 MTU 한도 (보통 20 byte) 에 맞춰 chunking.
+async function bleSend(payload: string): Promise<void> {
+  if (!_bleChar) throw new Error('BLE 미연결');
+  const bytes = encoder.encode(payload);
+  const CHUNK = 20;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    const chunk = bytes.slice(i, i + CHUNK);
+    // writeValueWithoutResponse 가 빠르지만 일부 모듈에서 backpressure 손실. writeValue 가 안전.
+    await _bleChar.writeValue(chunk);
+    if (i + CHUNK < bytes.length) await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+function onBleNotification(event: Event) {
+  const target = event.target as BluetoothRemoteGATTCharacteristic;
+  const value = target.value;
+  if (!value) return;
+  const text = new TextDecoder().decode(value);
+  _bleBuffer += text;
+  let nl: number;
+  while ((nl = _bleBuffer.indexOf('\n')) >= 0) {
+    const line = _bleBuffer.slice(0, nl).trim();
+    _bleBuffer = _bleBuffer.slice(nl + 1);
+    if (line.length === 0) continue;
+    handleLine(line);
+  }
+}
+
+async function safeBleCleanup(): Promise<void> {
+  if (_bleChar) {
+    try { _bleChar.removeEventListener('characteristicvaluechanged', onBleNotification); } catch {}
+    try { await _bleChar.stopNotifications(); } catch {}
+  }
+  if (_bleDevice?.gatt?.connected) {
+    try { _bleDevice.gatt.disconnect(); } catch {}
+  }
+  _bleChar = null;
+  _bleDevice = null;
+  _bleBuffer = '';
+}
 
 async function safeCleanup() {
   // 1) read loop 중단 — reader.cancel() 까지 기다림.

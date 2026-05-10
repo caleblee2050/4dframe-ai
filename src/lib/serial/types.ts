@@ -61,6 +61,68 @@ declare global {
     ringIndicator: boolean;
     dataSetReady: boolean;
   }
+
+  // === Web Bluetooth API (lib.dom 미포함 — 직접 선언) ===
+  // 출처: https://webbluetoothcg.github.io/web-bluetooth/
+  interface Navigator {
+    readonly bluetooth: Bluetooth;
+  }
+
+  interface Bluetooth extends EventTarget {
+    requestDevice(options?: RequestDeviceOptions): Promise<BluetoothDevice>;
+    getAvailability(): Promise<boolean>;
+  }
+
+  interface RequestDeviceOptions {
+    filters?: BluetoothLEScanFilter[];
+    optionalServices?: BluetoothServiceUUID[];
+    acceptAllDevices?: boolean;
+  }
+
+  interface BluetoothLEScanFilter {
+    services?: BluetoothServiceUUID[];
+    name?: string;
+    namePrefix?: string;
+  }
+
+  type BluetoothServiceUUID = number | string;
+  type BluetoothCharacteristicUUID = number | string;
+
+  interface BluetoothDevice extends EventTarget {
+    readonly id: string;
+    readonly name?: string;
+    readonly gatt?: BluetoothRemoteGATTServer;
+    addEventListener(type: 'gattserverdisconnected', listener: (this: BluetoothDevice, ev: Event) => unknown): void;
+    removeEventListener(type: 'gattserverdisconnected', listener: (this: BluetoothDevice, ev: Event) => unknown): void;
+  }
+
+  interface BluetoothRemoteGATTServer {
+    readonly device: BluetoothDevice;
+    readonly connected: boolean;
+    connect(): Promise<BluetoothRemoteGATTServer>;
+    disconnect(): void;
+    getPrimaryService(service: BluetoothServiceUUID): Promise<BluetoothRemoteGATTService>;
+  }
+
+  interface BluetoothRemoteGATTService {
+    readonly device: BluetoothDevice;
+    readonly uuid: string;
+    getCharacteristic(characteristic: BluetoothCharacteristicUUID): Promise<BluetoothRemoteGATTCharacteristic>;
+  }
+
+  interface BluetoothRemoteGATTCharacteristic extends EventTarget {
+    readonly service: BluetoothRemoteGATTService;
+    readonly uuid: string;
+    readonly value?: DataView;
+    readValue(): Promise<DataView>;
+    writeValue(value: BufferSource): Promise<void>;
+    writeValueWithResponse(value: BufferSource): Promise<void>;
+    writeValueWithoutResponse(value: BufferSource): Promise<void>;
+    startNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+    stopNotifications(): Promise<BluetoothRemoteGATTCharacteristic>;
+    addEventListener(type: 'characteristicvaluechanged', listener: (this: BluetoothRemoteGATTCharacteristic, ev: Event) => unknown): void;
+    removeEventListener(type: 'characteristicvaluechanged', listener: (this: BluetoothRemoteGATTCharacteristic, ev: Event) => unknown): void;
+  }
 }
 
 export {};

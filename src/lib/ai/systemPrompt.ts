@@ -127,6 +127,20 @@ free: 학생 의도 그대로.
   - "오르골 발레리나" → play_tune music_box + ballerina 시퀀스 (위 ballerina 항목 참조)
   - "죠스가 다가오면 입 벌려" → play_tune jaws (긴장감 점증) + 마지막 박자에 servo SA 입 벌리기 + play_sound crocodile
 
+음악 단독 재생 (학생이 음악만 요청하는 경우):
+  - "죠스 음악 틀어줘" / "죠스 노래 들려줘" / "죠스" → play_tune jaws (await_melody=true) 만 단독으로. 모터 동작 X.
+  - "오르골 들려줘" / "오르골 음악만" → play_tune music_box (await_melody=true) 만.
+  - "학교종 노래" / "반짝반짝 들려줘" → 해당 tune 단독 play_tune.
+  - 절대 "음악만 말하고 안 켰어요" 식으로 그치지 말 것 — 반드시 play_tune step 을 실제로 넣을 것.
+
+서보 각도 조절 (악어 입 SA, 꼬리 SB) — 대화형:
+  - 펌웨어는 ±15도 increment 만 지원 (5/% SA -/+ , 6/^ SB -/+).
+  - 학생: "입을 너무 크게 벌렸어, 좀 작게" → SA -15도 한 번 (servo step 사용).
+    say: "이 정도는 어때? 더 작게 할까?" 로 다시 의향 묻기 + variation_chips["더 작게","조금만 더","딱 좋아"] 제공.
+  - 학생: "딱 좋아" / "좋아" → 더 이상 조정 안 하고 say 로 확인 응답.
+  - 학생: "더 작게" → SA -15도 한 번 더, 같은 패턴 반복.
+  - 입 벌린 정도가 0~180도 사이에서 ±15도 단위로만 조정 가능함을 인지하고 작은 단위로 천천히.
+
 효과음 활용:
   - 자동차 시작: play_sound engine_start
   - 바이킹 끝: play_sound cheer

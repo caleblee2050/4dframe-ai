@@ -424,7 +424,7 @@ export default function PlayPage() {
     });
   };
 
-  // 💾 현재 program 을 내 스킬로 저장
+  // 💾 현재 program 을 내 스킬로 저장 — localStorage persist (4dframe-custom-skills)
   const onSaveSkill = () => {
     if (!program) return;
     const defaultLabel = stripAudioTags(program.intro ?? '').slice(0, 16) || '내 동작';
@@ -433,13 +433,22 @@ export default function PlayPage() {
     const trimmed = label.trim().slice(0, 16);
     const emojiInput = window.prompt('이모지 하나 골라줘 (예: 🌟 🎯 💖 🚀)', '⭐');
     const emoji = (emojiInput?.trim() || '⭐').slice(0, 4);
-    customSkills.add({
+    const saved = customSkills.add({
       artwork: (program.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
       label: trimmed,
       emoji,
       program,
     });
-    alert(`저장 완료! "${emoji} ${trimmed}" — 작품 카드 옆에서 다시 실행할 수 있어.`);
+    // 진단 — 실제 localStorage 에 저장됐는지 확인
+    const storeAfter = customSkills.skills;
+    const lsRaw = typeof window !== 'undefined' ? window.localStorage.getItem('4dframe-custom-skills') : null;
+    const lsCount = lsRaw ? (JSON.parse(lsRaw).state?.skills?.length ?? '?') : '없음';
+    console.log('[save-skill]', { saved: saved.id, storeCount: storeAfter.length, lsCount, lsExists: !!lsRaw });
+    alert(
+      `저장 완료! "${emoji} ${trimmed}"\n\n` +
+      `메모리: ${storeAfter.length}개 / localStorage: ${lsCount}개\n` +
+      `(localStorage 가 "없음" 이면 시크릿 모드일 수 있어요)`
+    );
   };
 
   // 외부에서 program 받아 즉시 실행 — 스킬 칩이 user gesture 안에서 호출.
@@ -488,134 +497,260 @@ export default function PlayPage() {
     });
   };
 
-  // 🎤 음성 입력 — Web Speech API (Chrome/Edge 한국어).
-  // 단순 흐름: 한 번 발화 → 결과 input 으로 → 종료. 다시 듣고 싶으면 재클릭.
-  type SR = {
-    lang: string; continuous: boolean; interimResults: boolean;
-    onstart?: () => void;
-    onresult: (e: { resultIndex: number; results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void;
-    onerror: (e: { error?: string }) => void;
-    onend: () => void;
-    onspeechstart?: () => void;
-    onspeechend?: () => void;
-    start: () => void; stop: () => void;
-  };
-  const recognitionRef = useRef<SR | null>(null);
-  const stoppedByUserRef = useRef(false);
-  const restartCountRef = useRef(0);
-  const finalTextRef = useRef('');
+  // 🎤 음성 입력 — MediaRecorder + 서버 STT (/api/stt → Gemini 2.5 Flash multimodal).
+  //
+  // 두 가지 모드:
+  //   1. 🎤 단발 마이크 — 클릭 시 녹음 → 침묵 자동 종료 → input 에 텍스트 채움 (학생이 보내기 누름)
+  //   2. 💬 대화모드 — ON 동안 자동 루프: 듣기 → 자동 보내기 → AI 응답 → 동작 실행 → 다시 듣기.
+  //      유치원생도 손 안 대고 음성으로만 작품과 대화. (대화모드는 conversationModeRef 로 STT onstop 분기)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const vadRafRef = useRef<number | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const [listening, setListening] = useState(false);
-  // 사용자 화면 진단: 마지막 mic 이벤트 한 줄 표시
   const [micStatus, setMicStatus] = useState<string>('');
-  const MAX_MIC_RESTART = 12;   // 침묵 자동 종료 시 최대 12회 재시작
+  const [conversationMode, setConversationMode] = useState(false);
+  // ref 들 — onstop closure 와 자동 흐름 effect 에서 stale state 회피
+  const conversationModeRef = useRef(false);
+  const listeningRef = useRef(false);
+  useEffect(() => { conversationModeRef.current = conversationMode; }, [conversationMode]);
+  useEffect(() => { listeningRef.current = listening; }, [listening]);
+  // sendPrompt 는 함수 선언이 위에 있지만 ref 로 stale 회피
+  const sendPromptRef = useRef<(p: string) => Promise<void>>(() => Promise.resolve());
+  useEffect(() => { sendPromptRef.current = sendPrompt; });
 
-  const onMicToggle = useCallback(() => {
+  const cleanupMic = useCallback(() => {
+    if (vadRafRef.current !== null) {
+      cancelAnimationFrame(vadRafRef.current);
+      vadRafRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+    mediaRecorderRef.current = null;
+  }, []);
+
+  const stopMicRecording = useCallback(() => {
+    const mr = mediaRecorderRef.current;
+    if (mr && mr.state === 'recording') mr.stop();
+  }, []);
+
+  const startMicRecording = useCallback(async () => {
     if (typeof window === 'undefined') return;
-    const win = window as unknown as { SpeechRecognition?: new () => SR; webkitSpeechRecognition?: new () => SR };
-    const SRClass = win.SpeechRecognition || win.webkitSpeechRecognition;
-    if (!SRClass) {
-      alert('이 브라우저는 음성 입력을 지원하지 않아요. 크롬/엣지를 써주세요!');
+    if (listeningRef.current) return; // 중복 시작 방지
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      alert('이 브라우저는 음성 입력을 지원하지 않아요. 크롬/엣지/사파리 최신 버전을 써주세요!');
       return;
     }
 
-    // 이미 듣는 중이면 stop (사용자 명시 종료)
-    if (listening && recognitionRef.current) {
-      stoppedByUserRef.current = true;
-      try { recognitionRef.current.stop(); } catch {}
-      setListening(false);
-      recognitionRef.current = null;
-      return;
-    }
+    try {
+      audioChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      mediaStreamRef.current = stream;
 
-    // 새 세션 시작
-    stoppedByUserRef.current = false;
-    restartCountRef.current = 0;
-    finalTextRef.current = '';
+      const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';
+      const mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = mr;
 
-    const startNew = () => {
-      const recognition = new SRClass();
-      recognition.lang = 'ko-KR';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognitionRef.current = recognition;
-
-      recognition.onstart = () => {
-        console.log('[mic] start (try', restartCountRef.current + 1, ')');
-        setListening(true);
-        setMicStatus(`🎤 듣는 중… (시도 ${restartCountRef.current + 1})`);
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
       };
-      recognition.onspeechstart = () => {
-        console.log('[mic] speech detected');
-        setMicStatus('🗣 말소리 감지됨');
-        // 사용자가 발화 시작 → 정상 동작 중. restart count 리셋 (긴 발화 허용)
-        restartCountRef.current = 0;
-      };
-      recognition.onresult = (e) => {
-        let interim = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const r = e.results[i];
-          const t = r[0].transcript;
-          if (r.isFinal) finalTextRef.current += t; else interim += t;
-        }
-        console.log('[mic] result:', { final: finalTextRef.current, interim });
-        setMicStatus(`✍️ "${(finalTextRef.current + interim).slice(0, 40)}"`);
-        setInput(finalTextRef.current + interim);
-        // 결과 들어옴 = 정상 동작. restart count 리셋.
-        restartCountRef.current = 0;
-      };
-      recognition.onerror = (e) => {
-        console.warn('[mic] error', e);
-        const errKey = e?.error ?? 'unknown';
-        setMicStatus(`⚠️ ${errKey}`);
-        if (errKey === 'not-allowed' || errKey === 'service-not-allowed') {
-          stoppedByUserRef.current = true;
-          alert('마이크 권한이 차단되어 있어요. 자물쇠 아이콘 → 마이크 허용으로 바꿔주세요.');
-        }
-      };
-      recognition.onend = () => {
-        console.log('[mic] end (stoppedByUser=' + stoppedByUserRef.current + ', restarts=' + restartCountRef.current + ')');
-        if (stoppedByUserRef.current || restartCountRef.current >= MAX_MIC_RESTART) {
-          setListening(false);
-          if (stoppedByUserRef.current) {
-            setMicStatus('');
+      mr.onstop = async () => {
+        const blob = new Blob(audioChunksRef.current, { type: mr.mimeType || 'audio/webm' });
+        cleanupMic();
+        setListening(false);
+        const isConvo = conversationModeRef.current;
+        if (blob.size < 2000) {
+          // 대화모드일 땐 너무 짧은 녹음은 그냥 조용히 넘어가고 다음 effect 가 다시 시작
+          if (!isConvo) {
+            setMicStatus('너무 짧아요 — 다시 눌러 주세요');
+            setTimeout(() => setMicStatus(''), 2000);
           } else {
-            // 한도 초과 = 마이크가 음성 인식 못 함. 명확한 진단.
-            setMicStatus('❌ 음성 인식 안 됨');
-            alert(
-              '🎤 음성이 한 번도 인식되지 않았어요.\n\n' +
-              '확인해주세요:\n' +
-              '1. 시스템 마이크 입력 장치 (System Settings → Sound → Input)\n' +
-              '2. Chrome 사이트 마이크 권한 (자물쇠 → 마이크 → 허용)\n' +
-              '3. 다른 앱이 마이크 점유 중인지 (Zoom 등 종료)\n' +
-              '4. 인터넷 연결 (Web Speech API 는 Google 서버 통신)\n\n' +
-              '대신 키보드로 직접 입력해도 OK!'
-            );
+            setMicStatus('');
           }
-          recognitionRef.current = null;
           return;
         }
-        restartCountRef.current++;
-        setMicStatus(`🔄 재시도 ${restartCountRef.current}/${MAX_MIC_RESTART}`);
-        setTimeout(() => {
-          if (!stoppedByUserRef.current) startNew();
-        }, 300);
+        setMicStatus('🤔 듣고 있어요…');
+        try {
+          const fd = new FormData();
+          fd.append('audio', blob, 'audio.webm');
+          const res = await fetch('/api/stt', { method: 'POST', body: fd });
+          const data: { text?: string; error?: string } = await res.json();
+          if (!res.ok || data.error) {
+            setMicStatus(`❌ ${data.error ?? '변환 실패'}`);
+            setTimeout(() => setMicStatus(''), 3000);
+            return;
+          }
+          const txt = (data.text ?? '').trim();
+          if (!txt) {
+            setMicStatus(isConvo ? '' : '🤷 들리는 말이 없었어요');
+            if (!isConvo) setTimeout(() => setMicStatus(''), 2000);
+            return;
+          }
+          if (isConvo) {
+            // 대화모드 — 자동 보내기. input 에는 보여주기만 하고 sendPrompt 가 비움.
+            setMicStatus('');
+            setInput(txt);
+            void sendPromptRef.current(txt);
+          } else {
+            // 단발 모드 — input 에 누적, 학생이 보내기 클릭
+            setInput((prev) => (prev ? prev + ' ' : '') + txt);
+            setMicStatus('');
+            requestAnimationFrame(() => {
+              textareaRef.current?.focus();
+              const len = textareaRef.current?.value.length ?? 0;
+              textareaRef.current?.setSelectionRange(len, len);
+            });
+          }
+        } catch (e) {
+          console.warn('[stt] fetch 실패', e);
+          setMicStatus('❌ 변환 서버 오류');
+          setTimeout(() => setMicStatus(''), 3000);
+        }
       };
 
-      try {
-        recognition.start();
-      } catch (e) {
-        console.warn('[mic] start 실패:', e);
-        setMicStatus(`❌ 시작 실패: ${e}`);
-        setListening(false);
-        recognitionRef.current = null;
-      }
-    };
+      mr.start();
+      setListening(true);
+      setMicStatus(conversationModeRef.current
+        ? '👂 듣고 있어요… 말해 보세요!'
+        : '🎤 말해 보세요… (멈추면 자동 변환)');
 
-    startNew();
-  }, [listening]);
+      // VAD — 침묵 자동 종료
+      const ctx = new AudioContext();
+      audioCtxRef.current = ctx;
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.5;
+      source.connect(analyser);
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+
+      const recordingStart = Date.now();
+      let lastSpokeAt = 0;
+      const SPEECH_THRESHOLD = 18;
+      const SILENCE_AFTER_SPEECH_MS = 1200;
+      const MIN_RECORDING_MS = 800;
+      // 대화모드는 30초 hard limit (학생이 길게 말할 수 있음), 단발은 15초
+      const HARD_MAX_MS = conversationModeRef.current ? 30000 : 15000;
+
+      const tick = () => {
+        if (!mediaRecorderRef.current || mediaRecorderRef.current.state !== 'recording') return;
+        analyser.getByteFrequencyData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) sum += buf[i];
+        const avg = sum / buf.length;
+        const now = Date.now();
+        if (avg > SPEECH_THRESHOLD) lastSpokeAt = now;
+
+        const elapsed = now - recordingStart;
+        const silenceFor = lastSpokeAt > 0 ? now - lastSpokeAt : 0;
+
+        if (
+          (elapsed > MIN_RECORDING_MS && lastSpokeAt > 0 && silenceFor > SILENCE_AFTER_SPEECH_MS) ||
+          elapsed > HARD_MAX_MS
+        ) {
+          if (mediaRecorderRef.current.state === 'recording') mediaRecorderRef.current.stop();
+          return;
+        }
+        vadRafRef.current = requestAnimationFrame(tick);
+      };
+      vadRafRef.current = requestAnimationFrame(tick);
+    } catch (e: unknown) {
+      cleanupMic();
+      setListening(false);
+      const name = (e as Error)?.name ?? '';
+      if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+        setMicStatus('🚫 마이크 권한 차단됨');
+        alert('마이크 권한이 차단되어 있어요. 자물쇠 아이콘 → 마이크 허용으로 바꿔주세요.');
+      } else if (name === 'NotFoundError') {
+        setMicStatus('🚫 마이크 장치 없음');
+        alert('마이크 장치를 찾지 못했어요. 시스템 입력 장치를 확인해 주세요.');
+      } else {
+        setMicStatus(`❌ ${(e as Error)?.message ?? '시작 실패'}`);
+      }
+    }
+  }, [cleanupMic]);
+
+  const onMicToggle = useCallback(() => {
+    if (listening) stopMicRecording();
+    else void startMicRecording();
+  }, [listening, startMicRecording, stopMicRecording]);
+
+  const onConversationToggle = useCallback(() => {
+    if (conversationMode) {
+      setConversationMode(false);
+      stopMicRecording();
+    } else {
+      setConversationMode(true);
+      if (!listening) void startMicRecording();
+    }
+  }, [conversationMode, listening, startMicRecording, stopMicRecording]);
+
+  // 💬 대화모드 자동 흐름 ① — program 생성되면 자동 실행 (학생이 ▶ 클릭 안 해도 됨)
+  useEffect(() => {
+    if (!conversationMode) return;
+    if (!program || isExecuting) return;
+    if (currentStepIndex !== null) return;
+    if (!isConnected) return;
+    const t = setTimeout(() => {
+      if (conversationModeRef.current) void onExecute();
+    }, 250);
+    return () => clearTimeout(t);
+    // onExecute 는 매 render 새 closure 지만 program 트리거에만 반응 — deps 단순.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationMode, program, isExecuting, isConnected]);
+
+  // 💬 대화모드 자동 흐름 ② — 모든 게 idle 일 때 자동 다시 듣기
+  useEffect(() => {
+    if (!conversationMode) return;
+    if (listening || isGenerating || isExecuting) return;
+    const t = setTimeout(() => {
+      if (conversationModeRef.current && !listeningRef.current) {
+        void startMicRecording();
+      }
+    }, 700);
+    return () => clearTimeout(t);
+  }, [conversationMode, listening, isGenerating, isExecuting, startMicRecording]);
 
   // ⚙️ 설정 모달
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // 🎯 서보 각도 — 펌웨어가 ±15도 increment 만 지원하므로 클라이언트에서 누적 추적.
+  // 페이지 진입 시 펌웨어의 posA/posB (default 90도) 와 동기화 가정.
+  const [servoA, setServoA] = useState(90);
+  const [servoB, setServoB] = useState(90);
+  const onServoAdjust = useCallback(async (axis: 'A' | 'B', delta: -15 | 15) => {
+    if (!isConnected) return;
+    const cmd = axis === 'A'
+      ? (delta > 0 ? '%' : '5')
+      : (delta > 0 ? '^' : '6');
+    try { await board.send(cmd); } catch {}
+    if (axis === 'A') setServoA((v) => Math.max(0, Math.min(180, v + delta)));
+    else setServoB((v) => Math.max(0, Math.min(180, v + delta)));
+  }, [isConnected, board]);
+  // 90도(중앙) 로 복귀 — ±15도 단위로 여러 번 보냄
+  const onServoCenter = useCallback(async (axis: 'A' | 'B') => {
+    if (!isConnected) return;
+    const cur = axis === 'A' ? servoA : servoB;
+    const diff = 90 - cur;
+    const steps = Math.round(diff / 15);
+    for (let i = 0; i < Math.abs(steps); i++) {
+      await onServoAdjust(axis, steps > 0 ? 15 : -15);
+      await new Promise((r) => setTimeout(r, 80));
+    }
+  }, [isConnected, servoA, servoB, onServoAdjust]);
 
   // 작품 변경 시 이전 작품 메시지/프로그램/입력 초기화 (이전 멘트가 남는 버그 fix).
   // 자동차 작품 진입 시 직접 조종 자동 ON — OFF 누르면 카드/키보드 모두 진짜 꺼지도록 SSoT 일원화.
@@ -796,15 +931,12 @@ export default function PlayPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showJoystick, artwork, isConnected]);
 
-  // 페이지 unmount 시 마이크 cleanup — recognitionRef leak 방지
+  // 페이지 unmount 시 마이크 cleanup — MediaStream/AudioContext leak 방지
   useEffect(() => {
     return () => {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch {}
-        recognitionRef.current = null;
-      }
+      cleanupMic();
     };
-  }, []);
+  }, [cleanupMic]);
 
   // 어디서든 Enter → textarea focus (조이스틱/일반 div 등에서 엔터 누르면 채팅창으로 이동).
   // textarea/input/contentEditable/button 안에서는 그쪽 onKeyDown 우선이라 무시.
@@ -856,34 +988,56 @@ export default function PlayPage() {
               내가 만든 작품을 말로 움직여 보세요.
             </div>
           </div>
-          {/* 거리센서 미니 위젯 — 보드 연결 시만 노출 */}
+          {/* 거리센서 미니 위젯 — 보드 연결 시만 노출. 클릭하면 거리 반응 모드 토글. */}
           {isConnected && (
-            <div
-              title={distanceReactivity ? '거리 반응 모드 ON — AI 가 거리에 반응해요' : '거리 반응 모드 OFF (설정에서 켜기)'}
+            <button
+              onClick={() => setDistanceReactivity((v) => !v)}
+              title={distanceReactivity
+                ? '거리 반응 모드 ON — AI 가 거리에 반응해요. 클릭하면 끔.'
+                : '거리 반응 모드 OFF — 클릭하면 켬'}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,
                 background: distanceReactivity ? palette.accent : palette.tilePink,
                 border: border.brutal, borderRadius: radius.sm,
                 padding: '6px 10px', boxShadow: shadow.brutalSm,
                 fontWeight: 800, fontSize: 13,
+                fontFamily: 'inherit', cursor: 'pointer',
               }}
             >
-              <span>👀</span>
+              <span>{distanceReactivity ? '👀' : '🙈'}</span>
               <span style={{ minWidth: 32, textAlign: 'right' }}>
                 {board.lastDistanceCm ?? '—'}
               </span>
               <span style={{ fontSize: 11, color: palette.textMuted }}>cm</span>
-            </div>
+              <span style={{
+                fontSize: 10, fontWeight: 700,
+                color: distanceReactivity ? palette.textMain : palette.textMuted,
+                marginLeft: 2,
+              }}>
+                {distanceReactivity ? 'ON' : 'OFF'}
+              </span>
+            </button>
           )}
           {!isConnected ? (
-            <button
-              onClick={() => board.connect()}
-              style={btn(palette.tertiary, '#fff')}
-              disabled={board.status === 'requesting' || board.status === 'opening'}
-            >
-              {board.status === 'requesting' ? '포트 선택 중…' :
-               board.status === 'opening' ? '연결 중…' : '🔌 보드 연결'}
-            </button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                onClick={() => board.connect()}
+                title="USB 케이블로 연결 (PC/노트북)"
+                style={{ ...btn(palette.tertiary, '#fff'), padding: '8px 12px', fontSize: 13 }}
+                disabled={board.status === 'requesting' || board.status === 'opening'}
+              >
+                {board.status === 'requesting' ? '선택 중…' :
+                 board.status === 'opening' ? '연결 중…' : '🔌 USB'}
+              </button>
+              <button
+                onClick={() => board.connectBle()}
+                title="블루투스로 연결 (휴대폰/PC, 보드의 BLE 모듈 LED 깜박이는지 확인)"
+                style={{ ...btn(palette.accent, palette.textMain), padding: '8px 12px', fontSize: 13 }}
+                disabled={board.status === 'requesting' || board.status === 'opening'}
+              >
+                📶 블루투스
+              </button>
+            </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <span style={{ fontSize: 11, color: palette.textMuted }}>
@@ -912,84 +1066,32 @@ export default function PlayPage() {
           </div>
         )}
 
-        {/* 작품 선택 + 거리 반응 토글 */}
-        <section style={{ ...card, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <div>
-            <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 6 }}>내 작품</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {ARTWORKS.map((a) => (
-                <button
-                  key={a.id}
-                  onClick={() => onArtworkChange(a.id)}
-                  style={{
-                    ...btn(artwork === a.id ? palette.tertiary : palette.panel,
-                            artwork === a.id ? '#fff' : palette.textMain),
-                    padding: '6px 10px', fontSize: 13,
-                  }}
-                >
-                  {a.emoji} {a.label}
-                </button>
-              ))}
-            </div>
-            {/* 스킬 칩 — 작품 선택 시 즉시 실행 가능한 standard 동작. AI 안 거침. */}
-            {skillsForArtwork(artwork).length > 0 && (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
-                  바로 실행 ▶
-                </span>
-                {skillsForArtwork(artwork).map((s) => (
-                  <button
-                    key={s.id}
-                    onClick={() => onRunSkill(s)}
-                    disabled={!isConnected || isExecuting}
-                    title={s.description}
-                    style={{
-                      ...btn(palette.tilePink, palette.textMain),
-                      padding: '6px 10px', fontSize: 12,
-                      opacity: (!isConnected || isExecuting) ? 0.4 : 1,
-                    }}
-                  >
-                    {s.emoji} {s.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* 내 스킬 칩 — 학생이 저장한 커스텀 동작 */}
-            {customSkills.skills.filter((s) => s.artwork === artwork).length > 0 && (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
-                  💖 내 스킬
-                </span>
-                {customSkills.skills.filter((s) => s.artwork === artwork).map((s) => (
-                  <span key={s.id} style={{ position: 'relative', display: 'inline-flex' }}>
-                    <button
-                      onClick={() => onRunSkill(s)}
-                      disabled={!isConnected || isExecuting}
-                      style={{
-                        ...btn(palette.accent, palette.textMain),
-                        padding: '6px 24px 6px 10px', fontSize: 12,
-                        opacity: (!isConnected || isExecuting) ? 0.4 : 1,
-                      }}
-                    >
-                      {s.emoji} {s.label}
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); if (confirm(`"${s.emoji} ${s.label}" 지울까?`)) customSkills.remove(s.id); }}
-                      title="삭제"
-                      style={{
-                        position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
-                        width: 16, height: 16, fontSize: 10, lineHeight: 1,
-                        background: 'transparent', border: 'none',
-                        color: palette.textMuted, cursor: 'pointer',
-                      }}
-                    >✕</button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          <div style={{ flex: 1 }} />
+        {/* 🛠 도구 바 — 작품과 무관한 글로벌 토글들 */}
+        <section style={{
+          ...card, padding: '10px 14px',
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 11, color: palette.textMuted, fontWeight: 700, marginRight: 4 }}>
+            🛠 도구
+          </span>
+          {/* 💬 대화모드 — 학생이 가장 자주 켤 핵심 버튼이라 첫 자리. */}
+          <button
+            onClick={onConversationToggle}
+            title={conversationMode
+              ? '대화모드 ON — 말하면 자동 실행. 끄려면 클릭.'
+              : '대화모드 켜기 — 말로 모든 걸 시키기 (유치원생 OK)'}
+            style={{
+              fontFamily: 'inherit', fontWeight: 800, fontSize: 13,
+              background: conversationMode ? palette.primary : palette.tilePink,
+              color: conversationMode ? '#fff' : palette.textMain,
+              border: border.brutal, borderRadius: radius.sm,
+              padding: '8px 14px', cursor: 'pointer',
+              boxShadow: shadow.brutalSm,
+              animation: conversationMode ? 'pulse 1.4s ease-in-out infinite' : 'none',
+            }}
+          >
+            💬 대화모드 {conversationMode ? 'ON' : 'OFF'}
+          </button>
           <button
             onClick={() => sound.toggleMute()}
             title={sound.muted ? '소리 켜기' : '소리 끄기'}
@@ -1035,6 +1137,85 @@ export default function PlayPage() {
           >
             🖐 손 동작 {showCamera ? 'ON' : 'OFF'}
           </button>
+        </section>
+
+        {/* 🎨 작품 카드 — 작품 선택 + 바로 실행 + 내 스킬 (학생용 핵심) */}
+        <section style={card}>
+          <div style={{ fontSize: 12, color: palette.textMuted, marginBottom: 6, fontWeight: 700 }}>
+            🎨 내 작품
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {ARTWORKS.map((a) => (
+              <button
+                key={a.id}
+                onClick={() => onArtworkChange(a.id)}
+                style={{
+                  ...btn(artwork === a.id ? palette.tertiary : palette.panel,
+                          artwork === a.id ? '#fff' : palette.textMain),
+                  padding: '6px 10px', fontSize: 13,
+                }}
+              >
+                {a.emoji} {a.label}
+              </button>
+            ))}
+          </div>
+          {/* 스킬 칩 — 작품 선택 시 즉시 실행 가능한 standard 동작. AI 안 거침. */}
+          {skillsForArtwork(artwork).length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
+              <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
+                바로 실행 ▶
+              </span>
+              {skillsForArtwork(artwork).map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => onRunSkill(s)}
+                  disabled={!isConnected || isExecuting}
+                  title={s.description}
+                  style={{
+                    ...btn(palette.tilePink, palette.textMain),
+                    padding: '6px 10px', fontSize: 12,
+                    opacity: (!isConnected || isExecuting) ? 0.4 : 1,
+                  }}
+                >
+                  {s.emoji} {s.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 내 스킬 칩 — 학생이 저장한 커스텀 동작 */}
+          {customSkills.skills.filter((s) => s.artwork === artwork).length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+              <span style={{ fontSize: 11, color: palette.textMuted, alignSelf: 'center' }}>
+                💖 내 스킬
+              </span>
+              {customSkills.skills.filter((s) => s.artwork === artwork).map((s) => (
+                <span key={s.id} style={{ position: 'relative', display: 'inline-flex' }}>
+                  <button
+                    onClick={() => onRunSkill(s)}
+                    disabled={!isConnected || isExecuting}
+                    style={{
+                      ...btn(palette.accent, palette.textMain),
+                      padding: '6px 24px 6px 10px', fontSize: 12,
+                      opacity: (!isConnected || isExecuting) ? 0.4 : 1,
+                    }}
+                  >
+                    {s.emoji} {s.label}
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); if (confirm(`"${s.emoji} ${s.label}" 지울까?`)) customSkills.remove(s.id); }}
+                    title="삭제"
+                    style={{
+                      position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                      width: 16, height: 16, fontSize: 10, lineHeight: 1,
+                      background: 'transparent', border: 'none',
+                      color: palette.textMuted, cursor: 'pointer',
+                    }}
+                  >✕</button>
+                </span>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* 🕹 직접 조종 — 토글 ON 시 노출 (자동차 작품 진입 시 자동 ON, OFF 누르면 진짜 꺼짐). */}
@@ -1553,6 +1734,50 @@ export default function PlayPage() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+
+            {/* 🎯 서보 각도 캘리브레이션 — 악어 입(SA), 꼬리(SB) ±15도 미세 조정 */}
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>🎯 서보 각도 (어른용)</div>
+              <div style={{ fontSize: 11, color: palette.textMuted, marginBottom: 10 }}>
+                악어 입(SA), 꼬리(SB) 각도를 ±15도 단위로 조정. 90도 = 중립.
+                값은 보드 재부팅하면 90도 로 초기화됩니다.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {([
+                  { axis: 'A' as const, label: 'SA — 악어 입 / 입 같은 부분', value: servoA },
+                  { axis: 'B' as const, label: 'SB — 꼬리 / 흔드는 부분', value: servoB },
+                ]).map(({ axis, label, value }) => (
+                  <div key={axis} style={{
+                    ...card,
+                    background: palette.tilePink,
+                    padding: 10, gap: 6,
+                    display: 'flex', flexDirection: 'column',
+                  }}>
+                    <div style={{ fontSize: 11, color: palette.textMuted, lineHeight: 1.3 }}>{label}</div>
+                    <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 26, lineHeight: 1 }}>{value}°</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                      <button
+                        onClick={() => void onServoAdjust(axis, -15)}
+                        disabled={!isConnected || value <= 0}
+                        style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: palette.panel, border: border.brutal, borderRadius: radius.sm, padding: '4px 0', cursor: 'pointer', opacity: (!isConnected || value <= 0) ? 0.4 : 1 }}
+                      >−15°</button>
+                      <button
+                        onClick={() => void onServoAdjust(axis, +15)}
+                        disabled={!isConnected || value >= 180}
+                        style={{ fontFamily: 'inherit', fontWeight: 900, fontSize: 14, background: palette.panel, border: border.brutal, borderRadius: radius.sm, padding: '4px 0', cursor: 'pointer', opacity: (!isConnected || value >= 180) ? 0.4 : 1 }}
+                      >+15°</button>
+                    </div>
+                    <button
+                      onClick={() => void onServoCenter(axis)}
+                      disabled={!isConnected || value === 90}
+                      style={{ fontFamily: 'inherit', fontWeight: 800, fontSize: 11, background: palette.tertiary, color: '#fff', border: border.brutal, borderRadius: radius.sm, padding: '5px 0', cursor: 'pointer', opacity: (!isConnected || value === 90) ? 0.5 : 1 }}
+                    >
+                      90° 중앙
+                    </button>
+                  </div>
+                ))}
               </div>
             </div>
 
