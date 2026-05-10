@@ -130,6 +130,25 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
     }
     if (get().status === 'connected') return;
 
+    // 사전 점검 — BLE 어댑터 가용성. 일부 환경에서 false 반환 (BT 꺼짐, 어댑터 BLE 미지원 등)
+    try {
+      const available = await navigator.bluetooth.getAvailability();
+      if (!available) {
+        set({
+          status: 'error',
+          errorMessage:
+            '블루투스 어댑터를 찾지 못했어요. 점검할 것:\n' +
+            '1. 시스템 블루투스 켜져 있는지\n' +
+            '2. BLE 4.0+ 어댑터인지 (오래된 동글은 BLE 미지원)\n' +
+            '3. 윈도우 권한 → 개인정보 → 블루투스 → Chrome 허용\n' +
+            '4. chrome://bluetooth-internals/#adapter 에서 "Powered: true / LE: true" 확인',
+        });
+        return;
+      }
+    } catch {
+      // getAvailability 자체 실패는 무시하고 requestDevice 진행
+    }
+
     try {
       set({ status: 'requesting', errorMessage: null });
       // acceptAllDevices 로 학생이 어떤 이름의 BLE 모듈이든 직접 선택 가능.
