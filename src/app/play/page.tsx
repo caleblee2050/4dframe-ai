@@ -448,7 +448,8 @@ export default function PlayPage() {
     console.log('[save-skill]', { saved: saved.id, storeCount: storeAfter.length, lsCount, lsExists: !!lsRaw });
     alert(
       `저장 완료! "${emoji} ${trimmed}"\n\n` +
-      `📍 화면의 "💖 내 스킬" 카드 (분홍 카드)에서 다시 실행할 수 있어요.\n\n` +
+      `📍 화면의 "💖 내 스킬" 카드 (분홍 카드)에서 다시 실행할 수 있어요.\n` +
+      `🌟 쉬운 모드 (/play/simple) 에도 자동으로 보여요 — 학생이 칩 클릭으로 즉시 실행 가능.\n\n` +
       `메모리: ${storeAfter.length}개 / localStorage: ${lsCount}개\n` +
       `(localStorage 가 "없음" 이면 시크릿 모드일 수 있어요)`
     );

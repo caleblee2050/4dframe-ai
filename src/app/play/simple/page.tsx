@@ -123,13 +123,44 @@ export default function SimplePlayPage() {
   const lastGestureSigRef = useRef('');
   const onCameraGesture = useCallback((g: { type: 'hand' | 'head_tilt'; openness?: number; fingerCount?: number; dx?: number }) => {
     const tt = useI18nStore.getState().t;
-    if (g.type !== 'hand' || g.fingerCount === undefined || !Number.isFinite(g.fingerCount)) {
+    if (g.type !== 'hand') return;
+    const b = useBoardStore.getState();
+
+    // 🐊 악어 작품일 때 — 단순 두 가지: 손 펼침 → 입 벌리기 / 주먹 → 입 다물기
+    if (artwork === 'crocodile') {
+      const o = g.openness;
+      if (o === undefined || !Number.isFinite(o)) {
+        setStatusMessage(tt('gesture.notRecognized'));
+        return;
+      }
+      // hysteresis 영역 — 0.3 이하 = 주먹, 0.6 이상 = 펼침. 사이 (0.3~0.6) 는 무시.
+      let key: 'open' | 'close' | null = null;
+      if (o >= 0.6) key = 'open';
+      else if (o <= 0.3) key = 'close';
+      if (!key) return;
+      if (b.status !== 'connected') {
+        setStatusMessage(`${key === 'open' ? '✋' : '✊'} — ${tt('gesture.boardOff')}`);
+        return;
+      }
+      if (lastGestureSigRef.current === key) return;
+      lastGestureSigRef.current = key;
+      if (key === 'open') {
+        setStatusMessage(`✋ → ${tt('basic.openMouth')}`);
+        void b.send('%');   // SA +15° (입 벌리기)
+      } else {
+        setStatusMessage(`✊ → ${tt('basic.closeMouth')}`);
+        void b.send('5');   // SA -15° (입 다물기)
+      }
+      return;
+    }
+
+    // 그 외 작품 — 기존 손가락 개수 0~5 매핑 (mappingStore)
+    if (g.fingerCount === undefined || !Number.isFinite(g.fingerCount)) {
       setStatusMessage(tt('gesture.notRecognized'));
       return;
     }
     const fc = g.fingerCount;
     const key = fingerCountToKey(fc);
-    const b = useBoardStore.getState();
     const meta = key ? GESTURE_LABELS[key] : null;
     const head = meta ? `${meta.emoji} ${meta.label}` : tt('gesture.fingerCount').replace('{n}', String(fc));
     if (b.status !== 'connected') { setStatusMessage(`${head} — ${tt('gesture.boardOff')}`); return; }
@@ -140,7 +171,7 @@ export default function SimplePlayPage() {
     const action = actionById(mapping[key]);
     setStatusMessage(`${head} → ${action.emoji} ${action.label}`);
     if (action.bytes) void b.send(action.bytes);
-  }, []);
+  }, [artwork]);
 
   // ⌨️ 키보드 화살표 — 자동차 작품 + 보드 연결 시 활성
   useEffect(() => {
@@ -193,11 +224,11 @@ export default function SimplePlayPage() {
   // === Computed ===
   const isConnected = board.status === 'connected';
   const builtIn = skillsForArtwork(artwork);
-  // simple 모드는 built-in 스킬만 노출 — 로컬 ↔ 배포 환경 동일성 보장.
-  // (customSkills 는 origin 별 localStorage 라 환경마다 다르게 보이는 문제 회피)
-  // custom 스킬은 /play 어드밴스드 모드에서만 사용.
-  void customSkillsStore;
-  const allSkills: (Skill | CustomSkill)[] = builtIn.slice(0, 3);
+  // 쉬운 모드 스킬 = 어른이 고급 모드에서 등록/삭제한 customSkills + built-in.
+  // customSkills 우선 (어른 의도) → 부족하면 built-in 채움. 최대 3개 슬롯.
+  // 고급 모드에서 ✕ 삭제하면 쉬운 모드에서도 즉시 사라짐 (zustand 공유).
+  const customs = customSkillsStore.skills.filter((s) => s.artwork === artwork);
+  const allSkills: (Skill | CustomSkill)[] = [...customs, ...builtIn].slice(0, 3);
 
   // === Connect ===
   const onToggleConnect = async () => {
