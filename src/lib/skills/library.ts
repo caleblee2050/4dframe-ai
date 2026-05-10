@@ -8,6 +8,18 @@ import type { Program } from '@/lib/dsl/schema';
 
 type Artwork = NonNullable<Program['artwork']>;
 
+// 스킬 executor — 음악-동작 정교 sync 가 필요한 스킬은 program 대신 executor 사용.
+// 200ms tick 으로 V level 보간 등 실시간 제어.
+export interface SkillExecutor {
+  send: (payload: string) => Promise<void>;
+  delay: (ms: number) => Promise<void>;
+  signal: AbortSignal;
+  speak: (text: string) => Promise<void>;
+  playMelody: (tune: string) => void;
+  playEffect: (sound: string) => void;
+  setStatus: (text: string) => void;
+}
+
 export interface Skill {
   id: string;
   artwork: Artwork;
@@ -15,6 +27,9 @@ export interface Skill {
   emoji: string;
   description: string; // 학생용 짧은 설명
   program: Program;
+  // optional: executor 정의 시 우선 호출 (program 무시).
+  // 음악-동작 sync 같은 정교 제어용.
+  execute?: (ctx: SkillExecutor) => Promise<void>;
 }
 
 export const SKILLS: Skill[] = [
@@ -130,23 +145,49 @@ export const SKILLS: Skill[] = [
     artwork: 'ballerina',
     label: '오르골 발레리나',
     emoji: '🩰',
-    description: '오르골 음악과 함께 점점 천천히 회전',
+    description: '오르골 음악과 함께 점점 천천히 회전 (음악-동작 정교 sync)',
     program: {
       schema_version: 1,
       artwork: 'ballerina',
       intro: '[happy]오르골 풀어줄게!',
-      steps: [
-        { do: 'play_tune', tune: 'music_box', await_melody: false },
-        { do: 'speed', level: '빠르게' },
-        { do: 'spin', motor: 'M1', speed: '빠르게', direction: 'forward', duration_ms: 2500 },
-        { do: 'speed', level: '보통' },
-        { do: 'spin', motor: 'M1', speed: '보통', direction: 'forward', duration_ms: 3500 },
-        { do: 'speed', level: '천천히' },
-        { do: 'spin', motor: 'M1', speed: '천천히', direction: 'forward', duration_ms: 5000 },
-        { do: 'stop' },
-        { do: 'say', text: '[curious]태엽 다 풀렸네... 다시 감을까?' },
-      ],
+      steps: [{ do: 'say', text: '[happy]태엽 풀어줄게!' }],
       variation_chips: ['다시 태엽 감기', '거꾸로 돌리기', '더 길게 돌리기', '반짝반짝으로'],
+    },
+    // 음악 진행률에 정확히 맞춰 V level 을 매끄럽게 감속.
+    // step 시퀀스로는 한 번에 한 V 만 설정 → 사이 정지/재시동으로 끊김.
+    // 여기선 하나의 'W' 시동 후 V 명령만 200ms 간격으로 갱신 → 끊김 없이 점진 감속.
+    execute: async (ctx) => {
+      const TOTAL_MS = 16500;   // music_box 멜로디 대략 길이
+      ctx.setStatus('🩰 오르골 풀어줄게!');
+      // 음악 시작 (비동기, 동시 진행)
+      ctx.playMelody('music_box');
+      await ctx.speak('[happy]태엽 풀어줄게!');
+      if (ctx.signal.aborted) return;
+
+      // 모든 모터 V9 으로 시작 — 발레리나가 어느 핀에 꽂혀도 OK
+      await ctx.send('V9');
+      await ctx.send('W');
+
+      const startedAt = Date.now();
+      while (true) {
+        if (ctx.signal.aborted) {
+          await ctx.send('0');
+          return;
+        }
+        const elapsed = Date.now() - startedAt;
+        if (elapsed >= TOTAL_MS) break;
+
+        const progress = elapsed / TOTAL_MS;       // 0 → 1
+        // V9 → V2 로 매끄럽게 감속 (마지막엔 거의 멈출듯)
+        const v = Math.max(2, Math.round(9 - progress * 7));
+        await ctx.send(`V${v}`);
+        ctx.setStatus(`🩰 V${v} (${Math.round(progress * 100)}%)`);
+        await ctx.delay(250);
+      }
+      // 끝
+      await ctx.send('0');
+      ctx.setStatus('🩰 끝!');
+      await ctx.speak('[curious]태엽 다 풀렸네... 다시 감을까?');
     },
   },
 

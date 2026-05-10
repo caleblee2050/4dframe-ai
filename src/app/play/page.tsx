@@ -373,7 +373,55 @@ export default function PlayPage() {
     abortRef.current?.abort();
     setProgram(skill.program);
     setInput(`${skill.emoji} ${skill.label}`);
-    void runProgramDirect(skill.program);
+    // 정교 sync 가 필요한 스킬은 execute 사용 (program 무시)
+    if ('execute' in skill && typeof skill.execute === 'function') {
+      void runSkillExecutor(skill);
+    } else {
+      void runProgramDirect(skill.program);
+    }
+  };
+
+  // 스킬 executor 호출 — 음악-동작 sync 등 정교 제어.
+  const runSkillExecutor = async (skill: Skill) => {
+    if (!skill.execute) return;
+    setIsExecuting(true);
+    setSayMessages([]);
+    setCurrentStepIndex(null);
+    abortRef.current = new AbortController();
+    const ctx = {
+      send: (p: string) => useBoardStore.getState().send(p),
+      delay: (ms: number) => new Promise<void>((r) => setTimeout(r, ms)),
+      signal: abortRef.current.signal,
+      speak: async (text: string) => {
+        setSayMessages((s) => [...s, { text: stripAudioTags(text), ts: Date.now() }]);
+        await speakText(text);
+      },
+      playMelody: (tune: string) => {
+        const muted = useSoundStore.getState().muted;
+        void playMelody(tune as Parameters<typeof playMelody>[0], 1.0, muted);
+      },
+      playEffect: (sound: string) => {
+        playEffect(sound as Parameters<typeof playEffect>[0], 1.0);
+      },
+      setStatus: (text: string) => {
+        setSayMessages((s) => {
+          const last = s[s.length - 1];
+          if (last && last.text.startsWith('🩰 ')) return [...s.slice(0, -1), { text, ts: Date.now() }];
+          return [...s, { text, ts: Date.now() }];
+        });
+      },
+    };
+    try {
+      await skill.execute(ctx);
+    } catch (e) {
+      console.warn('[skill executor] error', e);
+      try { await ctx.send(GLOBAL.stopAll); } catch {}
+    }
+    setIsExecuting(false);
+    setCurrentStepIndex(null);
+    requestAnimationFrame(() => {
+      suggestionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
   };
 
   // 💾 현재 program 을 내 스킬로 저장
@@ -622,10 +670,15 @@ export default function PlayPage() {
 
     const v13 = isV13Plus(b.lastBoot?.fw);
 
-    const lLevel = Math.min(9, Math.round(Math.abs(left) * 9));
-    const rLevel = Math.min(9, Math.round(Math.abs(right) * 9));
-    const lDir = left > 0.05 ? 1 : left < -0.05 ? -1 : 0;
-    const rDir = right > 0.05 ? 1 : right < -0.05 ? -1 : 0;
+    // ★ V level 은 조이스틱 거리(mag) 기반 — 조금 밀면 V3, 끝까지 밀면 V9.
+    //   "조금 밀었을 때와 끝까지 밀었을 때 속도가 달라야" 직관 fix.
+    //   좌/우 모터 ratio (left/right 부호+크기) 는 dir 와 한쪽 stop 여부로만 반영.
+    const speedLevel = Math.max(1, Math.min(9, Math.round(mag * 9)));
+    const lDir = left > 0.10 ? 1 : left < -0.10 ? -1 : 0;
+    const rDir = right > 0.10 ? 1 : right < -0.10 ? -1 : 0;
+    // 한 쪽이 정지면 그 쪽 PWM 0, 도는 쪽만 speedLevel.
+    const lLevel = lDir !== 0 ? speedLevel : 0;
+    const rLevel = rDir !== 0 ? speedLevel : 0;
 
     // 같은 명령 반복 송신 방지 (시리얼 포화 + 펌웨어 race 회피)
     const sig = `${lLevel}.${lDir}|${rLevel}.${rDir}`;
