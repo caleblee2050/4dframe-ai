@@ -122,16 +122,17 @@ export default function SimplePlayPage() {
   const [showCamera, setShowCamera] = useState(false);
   const lastGestureSigRef = useRef('');
   const onCameraGesture = useCallback((g: { type: 'hand' | 'head_tilt'; openness?: number; fingerCount?: number; dx?: number }) => {
+    const tt = useI18nStore.getState().t;
     if (g.type !== 'hand' || g.fingerCount === undefined || !Number.isFinite(g.fingerCount)) {
-      setStatusMessage('🙅 손 인식 안 됨');
+      setStatusMessage(tt('gesture.notRecognized'));
       return;
     }
     const fc = g.fingerCount;
     const key = fingerCountToKey(fc);
     const b = useBoardStore.getState();
     const meta = key ? GESTURE_LABELS[key] : null;
-    const head = meta ? `${meta.emoji} ${meta.label}` : `손가락 ${fc}개`;
-    if (b.status !== 'connected') { setStatusMessage(`${head} — 보드 미연결`); return; }
+    const head = meta ? `${meta.emoji} ${meta.label}` : tt('gesture.fingerCount').replace('{n}', String(fc));
+    if (b.status !== 'connected') { setStatusMessage(`${head} — ${tt('gesture.boardOff')}`); return; }
     if (!key) { setStatusMessage(head); return; }
     if (lastGestureSigRef.current === key) return;
     lastGestureSigRef.current = key;
@@ -192,8 +193,11 @@ export default function SimplePlayPage() {
   // === Computed ===
   const isConnected = board.status === 'connected';
   const builtIn = skillsForArtwork(artwork);
-  const customs = customSkillsStore.skills.filter((s) => s.artwork === artwork);
-  const allSkills: (Skill | CustomSkill)[] = [...customs, ...builtIn].slice(0, 3);
+  // simple 모드는 built-in 스킬만 노출 — 로컬 ↔ 배포 환경 동일성 보장.
+  // (customSkills 는 origin 별 localStorage 라 환경마다 다르게 보이는 문제 회피)
+  // custom 스킬은 /play 어드밴스드 모드에서만 사용.
+  void customSkillsStore;
+  const allSkills: (Skill | CustomSkill)[] = builtIn.slice(0, 3);
 
   // === Connect ===
   const onToggleConnect = async () => {
@@ -205,7 +209,7 @@ export default function SimplePlayPage() {
   const executeProgram = useCallback(async (prog: Program) => {
     if (isExecuting) return;
     if (board.status !== 'connected') {
-      setStatusMessage('🔌 보드를 먼저 연결해주세요!');
+      setStatusMessage(t('panel.connectFirst'));
       return;
     }
     setIsExecuting(true);
@@ -325,7 +329,7 @@ export default function SimplePlayPage() {
   const onRunSkill = (skill: Skill | CustomSkill) => {
     if (isExecuting) return;
     if (!isConnected) {
-      setStatusMessage('🔌 보드를 먼저 연결해주세요!');
+      setStatusMessage(t('panel.connectFirst'));
       return;
     }
     abortRef.current?.abort();
@@ -447,7 +451,7 @@ export default function SimplePlayPage() {
 
   // === Basic skill 명령 송신 (서보 ±15도) ===
   const onBasicCmd = async (cmd: string) => {
-    if (!isConnected) { setStatusMessage('🔌 보드를 먼저 연결해주세요!'); return; }
+    if (!isConnected) { setStatusMessage(t('panel.connectFirst')); return; }
     try { await board.send(cmd); } catch {}
   };
 
@@ -749,44 +753,67 @@ export default function SimplePlayPage() {
             {micStatus || statusMessage || t('character.greeting')}
           </div>
 
-          {/* 우측 하단 — 원본 이미지에서 자른 표정 도구 */}
+          {/* 우측 하단 — 표정 도구 (라벨 + 상태 포함, 직관적) */}
           <div className="tg-bottom-icons" aria-label="작품 도구">
             {/* 입 아이콘 — 설정 열기 */}
-            <button
-              className="tg-bottom-icon-btn"
-              onClick={() => setSettingsOpen(true)}
-              title="설정"
-            >
-              <Image
-                className="tg-mouth-img"
-                src="/thinkgen/mouth-icon.png"
-                alt="입 모양"
-                width={112}
-                height={82}
-              />
-            </button>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <button
+                className="tg-bottom-icon-btn"
+                onClick={() => setSettingsOpen(true)}
+                title={t('settings.title')}
+              >
+                <Image
+                  className="tg-mouth-img"
+                  src="/thinkgen/mouth-icon.png"
+                  alt={t('panel.settings')}
+                  width={112}
+                  height={82}
+                />
+              </button>
+              <span style={{ fontSize: 12, fontWeight: 800, color: C.textDark, letterSpacing: 0.3 }}>
+                {t('panel.settings')}
+              </span>
+            </div>
 
-            {/* 눈 아이콘 — 거리 반응 토글 */}
-            <button
-              className={`tg-bottom-icon-btn ${distanceReactivity ? 'is-active' : ''}`}
-              onClick={() => {
-                if (isConnected) setDistanceReactivity((v) => !v);
-              }}
-              aria-disabled={!isConnected}
-              title={
-                !isConnected ? '보드 미연결' :
-                distanceReactivity ? '거리 반응 모드 ON' :
-                '거리 반응 모드 OFF'
-              }
-            >
-              <Image
-                className="tg-eyes-img"
-                src="/thinkgen/eyes-icon.png"
-                alt="눈 모양"
-                width={120}
-                height={104}
-              />
-            </button>
+            {/* 눈 아이콘 — 거리 반응 토글 + cm + ON/OFF */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <button
+                className={`tg-bottom-icon-btn ${distanceReactivity ? 'is-active' : ''}`}
+                onClick={() => {
+                  if (isConnected) setDistanceReactivity((v) => !v);
+                }}
+                aria-disabled={!isConnected}
+                title={
+                  !isConnected ? t('panel.boardOff') :
+                  distanceReactivity ? `${t('settings.distanceReact')} ON` :
+                  `${t('settings.distanceReact')} OFF`
+                }
+                style={{ opacity: isConnected ? 1 : 0.55 }}
+              >
+                <Image
+                  className="tg-eyes-img"
+                  src="/thinkgen/eyes-icon.png"
+                  alt={t('panel.distance')}
+                  width={120}
+                  height={104}
+                />
+              </button>
+              <span style={{
+                fontSize: 12, fontWeight: 800, color: C.textDark,
+                display: 'flex', alignItems: 'center', gap: 4,
+              }}>
+                <span>{isConnected ? `${board.lastDistanceCm ?? '—'} ${t('distance.label')}` : '—'}</span>
+                <span style={{
+                  fontSize: 10, fontWeight: 900, letterSpacing: 0.5,
+                  padding: '1px 6px', borderRadius: 8,
+                  background: distanceReactivity ? C.purple : '#fff',
+                  color: distanceReactivity ? '#fff' : C.textMuted,
+                  border: `1.5px solid ${C.textDark}`,
+                }}>
+                  {distanceReactivity ? 'ON' : 'OFF'}
+                </span>
+              </span>
+            </div>
           </div>
         </div>
 
@@ -851,7 +878,7 @@ export default function SimplePlayPage() {
                   👀 {t('settings.distanceReact')}
                 </div>
                 <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                  AI 가 거리에 반응하는 동작 만듦 — 가까이 오면 멈춤 등
+                  {t('settings.distanceReact.desc')}
                 </div>
               </div>
             </label>
@@ -862,7 +889,7 @@ export default function SimplePlayPage() {
                 🔧 {t('settings.motorCalib')}
               </div>
               <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10 }}>
-                ▶ 시동 눌러보고, 안 돌면 + 로 한 칸씩 올려보세요.
+                {t('settings.motorCalib.desc')}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
                 {MOTOR_IDS.map((id) => {
@@ -884,9 +911,9 @@ export default function SimplePlayPage() {
                             background: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6,
                             padding: '2px 5px', cursor: 'pointer', color: C.textDark,
                           }}
-                        >{dir === 1 ? '정' : '역'}</button>
+                        >{dir === 1 ? t('settings.label.dirForward') : t('settings.label.dirReverse')}</button>
                       </div>
-                      <div style={{ textAlign: 'center', fontSize: 10, color: C.textMuted, marginTop: 2 }}>시동</div>
+                      <div style={{ textAlign: 'center', fontSize: 10, color: C.textMuted, marginTop: 2 }}>{t('settings.label.startup')}</div>
                       <div style={{ textAlign: 'center', fontWeight: 900, fontSize: 22, lineHeight: 1, color: C.textDark }}>V{v}</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
                         <button onClick={() => onAdjustThreshold(id, -1)} disabled={v <= 0}
@@ -896,7 +923,7 @@ export default function SimplePlayPage() {
                       </div>
                       <button onClick={() => void onTestStart(id)} disabled={!isConnected || isExecuting}
                         style={{ fontFamily: 'inherit', fontWeight: 800, fontSize: 11, background: C.purple, color: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6, padding: '5px 0', cursor: 'pointer', opacity: (!isConnected || isExecuting) ? 0.5 : 1 }}>
-                        ▶ 시동
+                        {t('settings.label.startBtn')}
                       </button>
                     </div>
                   );
@@ -910,12 +937,12 @@ export default function SimplePlayPage() {
                 🎯 {t('settings.servoCalib')}
               </div>
               <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10 }}>
-                악어 입(SA), 꼬리(SB) ±15° 단위. 90° = 중립.
+                {t('settings.servoCalib.desc')}
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 {([
-                  { axis: 'A' as const, label: 'SA — 악어 입', value: servoA },
-                  { axis: 'B' as const, label: 'SB — 꼬리', value: servoB },
+                  { axis: 'A' as const, label: t('settings.servoA'), value: servoA },
+                  { axis: 'B' as const, label: t('settings.servoB'), value: servoB },
                 ]).map(({ axis, label, value }) => (
                   <div key={axis} style={{
                     background: C.pink, border: `3px solid ${C.textDark}`, borderRadius: 12,
@@ -931,7 +958,7 @@ export default function SimplePlayPage() {
                     </div>
                     <button onClick={() => void onServoCenter(axis)} disabled={!isConnected || value === 90}
                       style={{ fontFamily: 'inherit', fontWeight: 800, fontSize: 11, background: C.purple, color: '#fff', border: `2px solid ${C.textDark}`, borderRadius: 6, padding: '5px 0', cursor: 'pointer', opacity: (!isConnected || value === 90) ? 0.5 : 1 }}>
-                      90° 중앙
+                      {t('settings.label.center90')}
                     </button>
                   </div>
                 ))}
