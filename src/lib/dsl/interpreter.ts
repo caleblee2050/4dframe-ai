@@ -12,6 +12,7 @@ import type {
   Program, Step, MotorId, SpeedLabel,
   SpinStep, DriveStep, ServoStep, SpeedStep, StopStep, WaitStep,
   WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep, PlaySoundStep, PlayTuneStep,
+  SetMotorDirStep, SetMotorThresholdStep,
 } from './schema';
 import {
   MOTORS, SERVOS, GLOBAL, pwmCommand, isV13Plus, speedToLevel,
@@ -125,7 +126,31 @@ async function executeStep(step: Step, ctx: StepCtx, path: string): Promise<void
       return execPlayTune(step, ctx);
     case 'save_skill':
       return ctx.emit({ type: 'save_skill', label: step.label, emoji: step.emoji });
+    case 'set_motor_dir':
+      return execSetMotorDir(step, ctx);
+    case 'set_motor_threshold':
+      return execSetMotorThreshold(step, ctx);
   }
+}
+
+// 모터 방향 영구 저장 + 펌웨어 F{n} 토글로 즉시 sync (현재 dirOverride 와 다를 때만).
+async function execSetMotorDir(step: SetMotorDirStep, ctx: StepCtx) {
+  const cal = useCalibrationStore.getState();
+  const current = cal.current.dirOverride[step.motor];
+  if (current !== step.dir) {
+    cal.toggleDir(step.motor);
+    // 펌웨어 측에도 F{n} 보내 즉시 반전 (다음 spin/drive 부터 적용).
+    const n = step.motor.slice(1);   // 'M1' → '1'
+    await ctx.send(`F${n}`);
+  }
+  await ctx.emit({ type: 'say', text: `${step.motor} 방향을 ${step.dir > 0 ? '정방향' : '역방향'} 으로 저장했어!` });
+}
+
+// 모터 시동 V 영구 저장 (다음 spin/drive 부터 속도 매핑에 즉시 반영).
+async function execSetMotorThreshold(step: SetMotorThresholdStep, ctx: StepCtx) {
+  const cal = useCalibrationStore.getState();
+  cal.setStartThreshold(step.motor, step.level);
+  await ctx.emit({ type: 'say', text: `${step.motor} 시동 V 를 ${step.level} 로 저장했어!` });
 }
 
 async function execSpin(step: SpinStep, ctx: StepCtx) {

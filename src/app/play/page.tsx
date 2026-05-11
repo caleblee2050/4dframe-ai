@@ -117,6 +117,7 @@ const stepIcon: Record<Step['do'], string> = {
   stop: '⏹', wait: '⏱', wait_for_distance: '👀', repeat: '🔁',
   say: '💬', calibrate: '🔧', play_sound: '🔊', play_tune: '🎵',
   save_skill: '💾',
+  set_motor_dir: '🔃', set_motor_threshold: '🎛',
 };
 
 function describeStep(step: Step): string {
@@ -158,6 +159,10 @@ function describeStep(step: Step): string {
     }
     case 'save_skill':
       return `💾 저장: ${step.emoji} ${step.label}`;
+    case 'set_motor_dir':
+      return `🔃 ${step.motor} 방향 ${step.dir > 0 ? '정방향' : '역방향'} 저장`;
+    case 'set_motor_threshold':
+      return `🎛 ${step.motor} 시동 V → ${step.level} 저장`;
   }
 }
 

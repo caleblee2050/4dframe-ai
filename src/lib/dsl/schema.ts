@@ -167,6 +167,23 @@ export interface SaveSkillStep extends BaseStep {
   emoji: string;       // 1글자 이모지
 }
 
+// 캘리브레이션: 모터 방향 영구 설정. dir=1 정방향, -1 역방향.
+// 인터프리터가 calibrationStore.dirOverride[motor]=dir 저장 + 펌웨어에 F{n} 송신해 즉시 동기화.
+// AI 가 대화로 "이 바퀴 거꾸로 돌아" → 사용자 응답 → 이 step 으로 영구 적용.
+export interface SetMotorDirStep extends BaseStep {
+  do: 'set_motor_dir';
+  motor: MotorId;
+  dir: 1 | -1;
+}
+
+// 캘리브레이션: 모터 시동 V 영구 설정. level 0~9.
+// "이 바퀴 안 돌아" → AI 가 한 단계 올려서 재시도 → 적당한 값 찾으면 이 step 으로 저장.
+export interface SetMotorThresholdStep extends BaseStep {
+  do: 'set_motor_threshold';
+  motor: MotorId;
+  level: number;       // 0~9
+}
+
 export type Step =
   | SpinStep
   | DriveStep
@@ -180,7 +197,9 @@ export type Step =
   | CalibrateStep
   | PlaySoundStep
   | PlayTuneStep
-  | SaveSkillStep;
+  | SaveSkillStep
+  | SetMotorDirStep
+  | SetMotorThresholdStep;
 
 // ─────────────────────────────────────────────────────────────
 // 프로그램 (AI가 한 번에 뱉는 단위)
@@ -324,6 +343,14 @@ function validateStep(step: Step, path: string): void {
         throw new DslValidationError(`${path}.label`, 'save_skill.label 은 1~16자');
       if (typeof step.emoji !== 'string' || step.emoji.length === 0 || step.emoji.length > 4)
         throw new DslValidationError(`${path}.emoji`, 'save_skill.emoji 는 1글자 이모지');
+      return;
+    case 'set_motor_dir':
+      if (!MOTOR_IDS.includes(step.motor)) throw new DslValidationError(`${path}.motor`, `잘못된 모터: ${step.motor}`);
+      if (step.dir !== 1 && step.dir !== -1) throw new DslValidationError(`${path}.dir`, 'dir 은 1 또는 -1');
+      return;
+    case 'set_motor_threshold':
+      if (!MOTOR_IDS.includes(step.motor)) throw new DslValidationError(`${path}.motor`, `잘못된 모터: ${step.motor}`);
+      assertInRange(`${path}.level`, step.level, 0, 9);
       return;
     default: {
       const exhaustive: never = step;
