@@ -9,7 +9,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Joystick } from '@/components/play/Joystick';
 import { CameraPanel } from '@/components/play/CameraPanel';
-import { isV13Plus } from '@/lib/commands/commands';
 import { skillsForArtwork, type Skill } from '@/lib/skills/library';
 import { useCustomSkillsStore, type CustomSkill } from '@/lib/skills/customStore';
 import { useGestureMappingStore, ACTIONS, actionById, fingerCountToKey, GESTURE_LABELS, type GestureKey, type ActionId } from '@/lib/gestures/mappingStore';
@@ -764,6 +763,8 @@ export default function PlayPage() {
   // board 객체를 deps 에 넣으면 거리센서 cm 100ms 갱신마다 onJoystickMove 새 ref →
   // useEffect re-run → cleanup 의 stopAll 호출 → 키보드 누르고 있어도 끊어짐(타다다다).
   const lastJoyRef = useRef<{ t: number; signature: string }>({ t: 0, signature: '' });
+  // 마지막으로 보드에 송신한 V level. 같은 값이면 V 명령 송신 안 함 (펌웨어 timer1 reset glitch 방지).
+  const lastVLevelRef = useRef<number>(-1);
   const onJoystickMove = useCallback((x: number, y: number, mag: number) => {
     const b = useBoardStore.getState();
     if (b.status !== 'connected') return;
@@ -788,8 +789,6 @@ export default function PlayPage() {
     const norm = Math.max(Math.abs(left), Math.abs(right), 1);
     left /= norm; right /= norm;
 
-    const v13 = isV13Plus(b.lastBoot?.fw);
-
     // ★ V level = ceil(mag * 9). Joystick 이 mag 를 재정규화 (데드존 직후=0, 끝=1) 해서
     //   아주 조금 밀면 V1, 끝까지 = V9. 9등분 균등.
     // epsilon 으로 부동소수점 오차 (mag=2/9 → ceil(2.0000001)=3) 차단.
@@ -807,10 +806,13 @@ export default function PlayPage() {
 
     const cmds: string[] = [];
     // 차동 조향 — 회로도 (5/11 PM) 기준 좌=M1+M2, 우=M3+M4.
-    // PWM 은 V{level} 명령 1개로 4모터 동일 설정. X{idx} 개별 PWM 명령은 펌웨어의
-    // detachServosAndRestorePwm 가 호출되며 applyPwmAll() 가 globalPwm(255)으로 덮어써
-    // 속도 조절 자체가 무효화되는 버그가 있어 사용 안 함.
-    if (v13) cmds.push(`V${speedLevel}`);
+    // V 명령은 lastBoot 도착 전에도 무조건 송신 (v1.0 펌웨어는 V 무시 = 안전).
+    // 같은 level 일 때 재송신 안 함 — 펌웨어 V 처리 시 detachServos/applyPwmAll 호출되어
+    // timer1 reset glitch + 모터 jerk 유발. dedupe 로 회전 중 안정성 확보.
+    if (lastVLevelRef.current !== speedLevel) {
+      cmds.push(`V${speedLevel}`);
+      lastVLevelRef.current = speedLevel;
+    }
     if (lLevel > 0 && lDir !== 0) {
       cmds.push(lDir > 0 ? '1' : '!');   // M1 앞왼
       cmds.push(lDir > 0 ? '2' : '@');   // M2 뒤왼

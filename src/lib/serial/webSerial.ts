@@ -130,9 +130,12 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
 
       set({ status: 'connected' });
 
-      // ⚠ 연결 직후 모터 강제 정지 — 새로고침 후 페이지가 다시 mount 됐는데 보드는 이전 명령으로
-      // 모터가 계속 돌고 있는 경우 방지. '0' = stop_all.
-      _writer?.write(encoder.encode('0')).catch(() => {});
+      // ⚠ 연결 직후:
+      // (1) '0' stop_all — 새로고침 후 페이지가 다시 mount 됐는데 보드는 이전 명령으로
+      //     모터가 계속 돌고 있는 경우 방지.
+      // (2) 'V3' — globalPwm 을 안전한 V3 (PWM 84) 으로 초기화. 펌웨어 부팅 default 가 V9
+      //     (PWM 255) 라 첫 모터 명령 시 풀파워 폭주 위험 차단.
+      _writer?.write(encoder.encode('0V3')).catch(() => {});
 
       // 보드가 이미 부팅된 상태에서 연결한 경우 BOOT 라인을 못 받음.
       // 진단 명령을 자동 발사해서 ID/FW 를 받아 lastBoot 칸을 채운다.
@@ -226,10 +229,10 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
       // ⚠ BLE 연결 직후 모터 폭주 방지:
       // JDY-23 의 GATT handshake 가 D4 SoftwareSerial RX 라인에 비트 글리치를 유발 →
       // 펌웨어가 'W' / '1' / '@' 같은 명령 byte 로 잘못 해석 → 모터 갑자기 회전.
-      // 첫 2초간 250ms 간격으로 '0' (stop_all) 송신해 어떤 가짜 명령도 강제 무효화.
-      try { await bleSend('0'); } catch {}
+      // 첫 2초간 250ms 간격으로 '0V3' (stop + 안전 PWM) 송신해 어떤 가짜 명령도 무효화.
+      try { await bleSend('0V3'); } catch {}
       for (let i = 1; i <= 8; i++) {
-        setTimeout(() => { void bleSend('0').catch(() => {}); }, i * 250);
+        setTimeout(() => { void bleSend('0V3').catch(() => {}); }, i * 250);
       }
 
       // 진단 명령 자동 발사 (BOOT 못 받았을 때 ID/FW 채우기)

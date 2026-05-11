@@ -19,7 +19,7 @@ import { validateProgram, type Program } from '@/lib/dsl/schema';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
 import { useSoundStore, playEffect, speakText, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
 import { playMelody } from '@/lib/sound/melodySynth';
-import { GLOBAL, isV13Plus, MOTORS } from '@/lib/commands/commands';
+import { GLOBAL, MOTORS } from '@/lib/commands/commands';
 import type { MotorId } from '@/lib/dsl/schema';
 import { useI18nStore } from '@/lib/i18n/store';
 import { LOCALES } from '@/lib/i18n/dict';
@@ -87,6 +87,8 @@ export default function SimplePlayPage() {
 
   // === Joystick (자동차 작품 시 자동 노출) ===
   const lastJoyRef = useRef<{ t: number; signature: string }>({ t: 0, signature: '' });
+  // 마지막 송신 V level — 같은 값이면 V 명령 재송신 안 함 (timer1 reset glitch 방지)
+  const lastVLevelRef = useRef<number>(-1);
   const onJoystickMove = useCallback((x: number, y: number, mag: number) => {
     const b = useBoardStore.getState();
     if (b.status !== 'connected') return;
@@ -104,7 +106,6 @@ export default function SimplePlayPage() {
     let left = fwd + turn, right = fwd - turn;
     const norm = Math.max(Math.abs(left), Math.abs(right), 1);
     left /= norm; right /= norm;
-    const v13 = isV13Plus(b.lastBoot?.fw);
     const speedLevel = Math.max(1, Math.min(9, Math.ceil(mag * 9 - 1e-6)));
     const lDir = left > 0.10 ? 1 : left < -0.10 ? -1 : 0;
     const rDir = right > 0.10 ? 1 : right < -0.10 ? -1 : 0;
@@ -114,9 +115,11 @@ export default function SimplePlayPage() {
     if (lastJoyRef.current.signature === sig) return;
     lastJoyRef.current = { t: now, signature: sig };
     const cmds: string[] = [];
-    // 좌=M1+M2, 우=M3+M4 차동 조향. V{level} 1개로 4모터 동일 PWM (X 명령 사용 X — 펌웨어
-    // detachServosAndRestorePwm 가 applyPwmAll 로 덮어쓰는 버그 회피).
-    if (v13) cmds.push(`V${speedLevel}`);
+    // V 명령은 lastBoot 무관 무조건 송신 (v1.0 펌웨어는 V 무시 — 안전). 같은 level dedupe.
+    if (lastVLevelRef.current !== speedLevel) {
+      cmds.push(`V${speedLevel}`);
+      lastVLevelRef.current = speedLevel;
+    }
     if (lLevel > 0 && lDir !== 0) cmds.push(lDir > 0 ? '1' : '!', lDir > 0 ? '2' : '@');
     if (rLevel > 0 && rDir !== 0) cmds.push(rDir > 0 ? '3' : '#', rDir > 0 ? '4' : '$');
     if (cmds.length > 0) void b.send(cmds.join(''));
