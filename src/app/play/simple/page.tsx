@@ -114,8 +114,9 @@ export default function SimplePlayPage() {
     if (lastJoyRef.current.signature === sig) return;
     lastJoyRef.current = { t: now, signature: sig };
     const cmds: string[] = [];
-    // 차동 조향 — 회로도 (5/11 PM) 기준 좌=M1+M2 (LF+LB), 우=M3+M4 (RF+RB).
-    if (v13) cmds.push(`X0${lLevel}`, `X1${lLevel}`, `X2${rLevel}`, `X3${rLevel}`);
+    // 좌=M1+M2, 우=M3+M4 차동 조향. V{level} 1개로 4모터 동일 PWM (X 명령 사용 X — 펌웨어
+    // detachServosAndRestorePwm 가 applyPwmAll 로 덮어쓰는 버그 회피).
+    if (v13) cmds.push(`V${speedLevel}`);
     if (lLevel > 0 && lDir !== 0) cmds.push(lDir > 0 ? '1' : '!', lDir > 0 ? '2' : '@');
     if (rLevel > 0 && rDir !== 0) cmds.push(rDir > 0 ? '3' : '#', rDir > 0 ? '4' : '$');
     if (cmds.length > 0) void b.send(cmds.join(''));
@@ -180,16 +181,15 @@ export default function SimplePlayPage() {
   useEffect(() => {
     if (artwork !== 'car_4wd' || !isConnectedEarly) return;
     const keys = new Set<string>();
-    // 직진/후진: 9V 있으면 V2, 없으면 V3. 좌/우 단독 (제자리 회전) 은 V5 boost (4WD 토크).
+    // 직진/후진 V3, 좌/우 단독 (제자리 회전) V5 boost (4WD 토크 필요).
     const update = () => {
       const ax = (keys.has('ArrowRight') ? 1 : 0) + (keys.has('ArrowLeft') ? -1 : 0);
       const ay = (keys.has('ArrowDown') ? 1 : 0) + (keys.has('ArrowUp') ? -1 : 0);
       const len = Math.sqrt(ax * ax + ay * ay);
       if (len === 0) onJoystickMove(0, 0, 0);
       else {
-        const has9V = useCalibrationStore.getState().current.has9VBattery;
         const pureTurn = ay === 0 && ax !== 0;
-        const level = pureTurn ? 5 : (has9V ? 2 : 3);
+        const level = pureTurn ? 5 : 3;
         const mag = level / 9;
         onJoystickMove(ax / len * mag, ay / len * mag, mag);
       }
@@ -1008,28 +1008,6 @@ export default function SimplePlayPage() {
               </div>
             </label>
 
-            {/* 9V 배터리 — 키보드 화살표 기본 속도 결정 */}
-            <label style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              background: cal.current.has9VBattery ? C.mint : '#fff',
-              border: `3px solid ${C.textDark}`, borderRadius: 16,
-              padding: '12px 16px', cursor: 'pointer',
-            }}>
-              <input
-                type="checkbox"
-                checked={cal.current.has9VBattery}
-                onChange={(e) => cal.setHas9VBattery(e.target.checked)}
-                style={{ width: 20, height: 20, cursor: 'pointer' }}
-              />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.textDark }}>
-                  🔋 {t('settings.has9V')}
-                </div>
-                <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
-                  {t('settings.has9V.desc')}
-                </div>
-              </div>
-            </label>
 
             {/* 모터 길들이기 */}
             <div>

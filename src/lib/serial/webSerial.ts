@@ -130,6 +130,10 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
 
       set({ status: 'connected' });
 
+      // ⚠ 연결 직후 모터 강제 정지 — 새로고침 후 페이지가 다시 mount 됐는데 보드는 이전 명령으로
+      // 모터가 계속 돌고 있는 경우 방지. '0' = stop_all.
+      _writer?.write(encoder.encode('0')).catch(() => {});
+
       // 보드가 이미 부팅된 상태에서 연결한 경우 BOOT 라인을 못 받음.
       // 진단 명령을 자동 발사해서 ID/FW 를 받아 lastBoot 칸을 채운다.
       setTimeout(() => {

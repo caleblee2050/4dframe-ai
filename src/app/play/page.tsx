@@ -806,12 +806,11 @@ export default function PlayPage() {
     lastJoyRef.current = { t: now, signature: sig };
 
     const cmds: string[] = [];
-    // 차동 조향 — 회로도 (5/11 PM) 기준:
-    //   왼쪽 페어 = M1(앞왼) + M2(뒤왼) = PWM idx 0,1 = X0,X1
-    //   오른쪽 페어 = M3(앞오) + M4(뒤오) = PWM idx 2,3 = X2,X3
-    if (v13) {
-      cmds.push(`X0${lLevel}`, `X1${lLevel}`, `X2${rLevel}`, `X3${rLevel}`);
-    }
+    // 차동 조향 — 회로도 (5/11 PM) 기준 좌=M1+M2, 우=M3+M4.
+    // PWM 은 V{level} 명령 1개로 4모터 동일 설정. X{idx} 개별 PWM 명령은 펌웨어의
+    // detachServosAndRestorePwm 가 호출되며 applyPwmAll() 가 globalPwm(255)으로 덮어써
+    // 속도 조절 자체가 무효화되는 버그가 있어 사용 안 함.
+    if (v13) cmds.push(`V${speedLevel}`);
     if (lLevel > 0 && lDir !== 0) {
       cmds.push(lDir > 0 ? '1' : '!');   // M1 앞왼
       cmds.push(lDir > 0 ? '2' : '@');   // M2 뒤왼
@@ -873,11 +872,9 @@ export default function PlayPage() {
       const len = Math.sqrt(ax * ax + ay * ay);
       if (len === 0) onJoystickMove(0, 0, 0);
       else {
-        // 기본 속도 — 직진/후진: 9V 있으면 V2, 없으면 V3.
-        // 좌/우 단독 (제자리 회전) 은 4WD 토크 필요 — V5 boost.
-        const has9V = useCalibrationStore.getState().current.has9VBattery;
+        // 기본 속도 V3. 좌/우 단독 (제자리 회전) 은 4WD 토크 필요 — V5 boost.
         const pureTurn = ay === 0 && ax !== 0;
-        const level = pureTurn ? 5 : (has9V ? 2 : 3);
+        const level = pureTurn ? 5 : 3;
         const mag = level / 9;
         onJoystickMove(ax / len * mag, ay / len * mag, mag);
       }
