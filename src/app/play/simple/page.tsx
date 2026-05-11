@@ -244,15 +244,15 @@ export default function SimplePlayPage() {
   // === Execute Program ===
   const executeProgram = useCallback(async (prog: Program) => {
     if (isExecuting) return;
-    // 보드 미연결이어도 save_skill 만 들어있는 program 은 허용 (저장만 하니까)
-    const isSaveOnly = prog.steps.length > 0 && prog.steps.every((s) => s.do === 'save_skill');
-    if (!isSaveOnly && board.status !== 'connected') {
+    // save_skill 이 포함된 program 은 "저장 명령" — 보드 미연결도 OK, lastProgramRef 도 갱신 X.
+    // 저장 시 직전 동작 program (lastProgramRef) 을 customSkill 로 저장한다.
+    const hasSaveSkill = prog.steps.some((s) => s.do === 'save_skill');
+    if (!hasSaveSkill && board.status !== 'connected') {
       setStatusMessage(t('panel.connectFirst'));
       return;
     }
     setIsExecuting(true);
-    // save_skill 전용이 아닌 program 은 lastProgramRef 갱신 — 학생 "저장해줘" 시 이 program 저장
-    if (!isSaveOnly) {
+    if (!hasSaveSkill) {
       lastProgramRef.current = prog;
     }
     if (prog.intro) {

@@ -5,7 +5,26 @@
 // 페이지 mount 시 fetch /api/skills → state 초기화. add/remove/toggle 즉시 서버 sync.
 
 import { create } from 'zustand';
-import type { Program } from '@/lib/dsl/schema';
+import type { Program, Step } from '@/lib/dsl/schema';
+
+// save_skill step 을 program 에서 제거 (재귀 — repeat 안까지).
+// customSkill 로 저장될 때 자기 자신을 저장하는 무한 루프 방지.
+function stripSaveSkill(steps: Step[]): Step[] {
+  const out: Step[] = [];
+  for (const s of steps) {
+    if (s.do === 'save_skill') continue;
+    if (s.do === 'repeat') {
+      out.push({ ...s, steps: stripSaveSkill(s.steps) });
+    } else {
+      out.push(s);
+    }
+  }
+  return out;
+}
+
+function sanitizeProgramForSave(p: Program): Program {
+  return { ...p, steps: stripSaveSkill(p.steps) };
+}
 
 type Artwork = NonNullable<Program['artwork']>;
 
@@ -79,6 +98,11 @@ export const useCustomSkillsStore = create<CustomSkillsState>()((set, get) => ({
   },
 
   add: async (s) => {
+    const cleanProgram = sanitizeProgramForSave(s.program);
+    if (cleanProgram.steps.length === 0) {
+      set({ error: '저장할 동작이 없어요. 먼저 동작을 만들어보세요!' });
+      return null;
+    }
     try {
       const res = await fetch('/api/skills', {
         method: 'POST',
@@ -88,7 +112,7 @@ export const useCustomSkillsStore = create<CustomSkillsState>()((set, get) => ({
           label: s.label,
           emoji: s.emoji,
           description: s.description,
-          program: s.program,
+          program: cleanProgram,
         }),
       });
       if (!res.ok) throw new Error(`add ${res.status}`);

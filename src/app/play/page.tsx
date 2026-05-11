@@ -188,6 +188,9 @@ export default function PlayPage() {
   const [isExecuting, setIsExecuting] = useState(false);
   const [currentStepIndex, setCurrentStepIndex] = useState<number | null>(null);
   const [sayMessages, setSayMessages] = useState<Array<{ text: string; ts: number }>>([]);
+  // 직전 실행한 "동작" program — save_skill 이 발생하면 이걸 customSkill 로 저장.
+  // 새 AI 응답이 save_skill 을 포함하면 lastExecutedActionRef 는 갱신하지 않는다.
+  const lastExecutedActionRef = useRef<Program | null>(null);
   const [showTrace, setShowTrace] = useState(false);   // 실행 과정 펼침 여부
   const [showJoystick, setShowJoystick] = useState(false);   // 직접 조종 카드 표시 (작품 무관 토글)
   const [showCamera, setShowCamera] = useState(false);   // 카메라 동작 인식 토글
@@ -287,9 +290,14 @@ export default function PlayPage() {
 
   const onExecute = async () => {
     if (!program || isExecuting) return;
-    if (!isConnected) {
+    // save_skill 이 포함된 program 은 "저장 명령" — 보드 미연결도 허용, lastExecutedActionRef 도 갱신 X.
+    const hasSaveSkill = program.steps.some((s) => s.do === 'save_skill');
+    if (!hasSaveSkill && !isConnected) {
       alert('보드를 먼저 연결해주세요.');
       return;
+    }
+    if (!hasSaveSkill) {
+      lastExecutedActionRef.current = program;
     }
     setIsExecuting(true);
     setSayMessages([]);
@@ -335,13 +343,16 @@ export default function PlayPage() {
           setSayMessages((s) => [...s, { text: `🔧 ${msg}`, ts: Date.now() }]);
         }
         else if (e.type === 'save_skill') {
-          // 마지막 실행한 program (state) 을 customSkill 로 저장 (Turso 서버 sync)
-          if (program) {
+          // 직전 실행한 "동작" program 을 customSkill 로 저장 (현재 program 은 save_skill 명령 응답).
+          const target = lastExecutedActionRef.current;
+          if (!target) {
+            setSayMessages((s) => [...s, { text: '❌ 저장할 동작이 없어요. 먼저 동작을 만들어보세요!', ts: Date.now() }]);
+          } else {
             const saved = await customSkills.add({
-              artwork: (program.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
+              artwork: (target.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
               label: e.label.slice(0, 16),
               emoji: e.emoji.slice(0, 4),
-              program,
+              program: target,
             });
             if (saved) {
               setSayMessages((s) => [...s, { text: `💾 "${saved.emoji} ${saved.label}" 저장됨!`, ts: Date.now() }]);
@@ -480,6 +491,10 @@ export default function PlayPage() {
   // 외부에서 program 받아 즉시 실행 — 스킬 칩이 user gesture 안에서 호출.
   const runProgramDirect = async (prog: Program) => {
     if (isExecuting) return;
+    // 직전 동작 추적 — 스킬 실행 후 "저장해줘" 시 이 program 을 저장.
+    if (!prog.steps.some((s) => s.do === 'save_skill')) {
+      lastExecutedActionRef.current = prog;
+    }
     setIsExecuting(true);
     setSayMessages([]);
     setCurrentStepIndex(null);

@@ -57,10 +57,11 @@ Step 종류:
    sound: cheer|engine_start|engine_run|creak|splash|whoosh|crocodile|beep|ding|wobble
 - save_skill : { do:"save_skill", label:"<1~16자>", emoji:"<1글자>" }
    학생이 명시적으로 "저장해줘" / "스킬로 만들어줘" / "이걸로 등록" 같이 말할 때만 사용.
-   클라이언트가 학생의 직전 실행 동작 (program) 을 customSkill 로 저장.
+   클라이언트가 학생의 **직전 실행 동작 (program)** 을 customSkill 로 저장. save_skill 응답
+   자체에는 동작 step 이 절대 들어가면 안 됨 — 안 그러면 자기 자신을 무한 저장하게 됨.
    label = 짧고 학생 친화적인 이름 (예: "죠스 잡아먹기", "신나게 빙글빙글").
    emoji = 동작 분위기에 맞는 1글자 이모지 (예: 🦈 🐊 🎵 🌟 🚗 🩰).
-   ⚠️ save_skill 만 있는 program 응답 — 다른 step (spin/drive/play_tune 등) 없이 save_skill 한 개만.
+   ⚠️ save_skill 응답 형식: steps 안에 save_skill 한 개 + (선택) say 한 개. 그 외 동작 step 절대 금지.
 
 - play_tune : { do:"play_tune", tune:"<id>", tempo?:0.5~3, await_melody?:boolean, custom?:{...} }
    tune: school_bell(학교종)|twinkle(반짝반짝)|butterfly(나비야)|mountain_rabbit(산토끼)
@@ -169,19 +170,24 @@ free: 학생 의도 그대로.
   - 학생이 동작을 만들고 (예: "악어 잡아먹기에 죠스 음악 넣어줘") → AI 가 program 생성 + 실행.
   - 실행 끝 마지막 say 에 "마음에 들면 '저장해줘' 라고 해봐!" 같은 권유 추가.
   - variation_chips 에 **"저장해줘"** 칩 포함 — 학생이 한 번에 저장 가능.
-  - 학생이 "저장해줘" / "이걸로 저장" / "스킬로 만들어줘" 응답 시:
-    → AI 는 {"steps":[{"do":"save_skill","label":"<짧은 이름>","emoji":"<1글자>"}]} 만 응답.
-    → 다른 동작 step 절대 포함하지 말 것 (클라이언트가 직전 실행한 program 을 저장).
-    → label 은 학생이 한 말 또는 동작 핵심 (예: "죠스 잡아먹기", "신나게 흔들기"). 16자 이하.
-    → emoji 는 동작 분위기 (🦈 🐊 🎵 🌟 🚗 🩰 ✈️ 🦋 ⭐ 등). 1글자.
-    → 마지막 say: "[happy]'<emoji> <label>' 저장했어! 내 스킬에 추가됐어!"
+  - 학생이 "저장해줘" / "이걸로 저장" / "스킬로 만들어줘" 응답 시 다음 형식으로만 응답:
+    {"schema_version":1,"steps":[{"do":"save_skill","label":"...","emoji":"..."},{"do":"say","text":"..."}]}
+    → **첫 step**: save_skill (반드시 1번만, label/emoji 만)
+    → **두번째 step (선택)**: say — 저장 확인 멘트
+    → 🚫 **그 외 어떤 동작 step 도 절대 포함 금지** (spin/drive/play_tune/play_sound/servo/wait/repeat...).
+       클라이언트가 학생의 직전 실행 program 을 저장하는데, 응답에 동작 step 이 들어가면
+       그 step 들이 customSkill 로 저장돼서 학생이 스킬 누를 때마다 또 저장 → 무한 루프 버그.
+    → label = 학생이 한 말 또는 동작 핵심 (예: "죠스 잡아먹기", "신나게 흔들기"). 16자 이하.
+    → emoji = 동작 분위기 (🦈 🐊 🎵 🌟 🚗 🩰 ✈️ 🦋 ⭐ 등). 1글자.
+    → say 톤: "[happy]'<emoji> <label>' 저장했어! 내 스킬에 추가됐어!"
 
   예시:
   학생: "악어 잡아먹기에 죠스 음악 넣어줘"
   JSON: { ... program with play_tune jaws + servo + ..., variation_chips:["저장해줘","더 무섭게","천천히 한 번"], steps:[..., {"do":"say","text":"[whispers]어때? 마음에 들면 저장해줘!"}] }
 
   학생: "저장해줘"
-  JSON: {"schema_version":1,"artwork":"crocodile","steps":[{"do":"save_skill","label":"죠스 잡아먹기","emoji":"🦈"},{"do":"say","text":"[happy]🦈 죠스 잡아먹기 저장했어! 내 스킬에 추가됐어!"}],"variation_chips":["다시 실행","더 만들기","다른 작품"]}
+  JSON: {"schema_version":1,"steps":[{"do":"save_skill","label":"죠스 잡아먹기","emoji":"🦈"},{"do":"say","text":"[happy]🦈 죠스 잡아먹기 저장했어! 내 스킬에 추가됐어!"}],"variation_chips":["다시 실행","더 만들기","다른 작품"]}
+  (artwork 필드 없음 — 클라이언트가 직전 program 의 artwork 자동 사용)
 
 음악 활용 (음악 리듬 매칭):
   - "학교종이 땡땡땡에 맞춰 흔들어줘" → play_tune school_bell + spin/repeat 같이
