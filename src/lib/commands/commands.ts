@@ -24,29 +24,38 @@ export interface MotorConfig {
   pwmIndex: 0 | 1 | 2 | 3;  // PWM_PINS 배열 인덱스 (X 명령용)
 }
 
+// 펌웨어 (`MechatronicsController.ino`) ↔ Ami5_V01 회로도 매핑 (5/11 PM 회로도 입수):
+//   M1 (forwardByte '1') → 방향핀 D8/A0  → LM_A → 앞왼쪽 (Left Front)  → PWM D5
+//   M2 (forwardByte '2') → 방향핀 A1/A2  → LM_B → 뒤왼쪽 (Left Back)   → PWM D6
+//   M3 (forwardByte '3') → 방향핀 A3/A4  → RM_A → 앞오른쪽 (Right Front)→ PWM D9
+//   M4 (forwardByte '4') → 방향핀 D13/A5 → RM_B → 뒤오른쪽 (Right Back) → PWM D10
+//
+// ⚠ 5/11 PM 이전: M1.pwmPin/M2.pwmPin 이 거꾸로 매핑돼 X 명령 시 PWM 이 엉뚱한 모터로 감.
+//   조이스틱 차동 조향이 안 돌던 원인 (좌/우 페어가 앞/뒤 페어로 적용됨).
+//   회로도 입수 후 정정.
 export const MOTORS: Record<MotorId, MotorConfig> = {
   M1: {
-    id: 'M1', labelKr: '모터 1',
+    id: 'M1', labelKr: '앞왼쪽',
     forwardByte: '1', reverseByte: '!', dirToggleSeq: 'F1',
-    defaultDir: 1, typicalStartPwmLevel: 3,
-    pwmPin: 6, pwmIndex: 1,
-  },
-  M2: {
-    id: 'M2', labelKr: '모터 2',
-    forwardByte: '2', reverseByte: '@', dirToggleSeq: 'F2',
     defaultDir: 1, typicalStartPwmLevel: 3,
     pwmPin: 5, pwmIndex: 0,
   },
+  M2: {
+    id: 'M2', labelKr: '뒤왼쪽',
+    forwardByte: '2', reverseByte: '@', dirToggleSeq: 'F2',
+    defaultDir: 1, typicalStartPwmLevel: 3,
+    pwmPin: 6, pwmIndex: 1,
+  },
   M3: {
-    id: 'M3', labelKr: '모터 3',
+    id: 'M3', labelKr: '앞오른쪽',
     forwardByte: '3', reverseByte: '#', dirToggleSeq: 'F3',
-    defaultDir: -1, typicalStartPwmLevel: 3,
+    defaultDir: -1, typicalStartPwmLevel: 3,  // 펌웨어가 IN1/IN2 거울 반전 → 기본 -1
     pwmPin: 9, pwmIndex: 2,
   },
   M4: {
-    id: 'M4', labelKr: '모터 4',
+    id: 'M4', labelKr: '뒤오른쪽',
     forwardByte: '4', reverseByte: '$', dirToggleSeq: 'F4',
-    defaultDir: 1, typicalStartPwmLevel: 5,  // ⚠ 빡빡한 개체
+    defaultDir: 1, typicalStartPwmLevel: 5,  // 빡빡한 개체 (개체차)
     pwmPin: 10, pwmIndex: 3,
   },
 };

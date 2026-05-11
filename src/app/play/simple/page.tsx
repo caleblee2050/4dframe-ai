@@ -114,9 +114,10 @@ export default function SimplePlayPage() {
     if (lastJoyRef.current.signature === sig) return;
     lastJoyRef.current = { t: now, signature: sig };
     const cmds: string[] = [];
-    if (v13) cmds.push(`X1${lLevel}`, `X2${lLevel}`, `X0${rLevel}`, `X3${rLevel}`);
-    if (lLevel > 0 && lDir !== 0) cmds.push(lDir > 0 ? '1' : '!', lDir > 0 ? '3' : '#');
-    if (rLevel > 0 && rDir !== 0) cmds.push(rDir > 0 ? '2' : '@', rDir > 0 ? '4' : '$');
+    // 차동 조향 — 회로도 (5/11 PM) 기준 좌=M1+M2 (LF+LB), 우=M3+M4 (RF+RB).
+    if (v13) cmds.push(`X0${lLevel}`, `X1${lLevel}`, `X2${rLevel}`, `X3${rLevel}`);
+    if (lLevel > 0 && lDir !== 0) cmds.push(lDir > 0 ? '1' : '!', lDir > 0 ? '2' : '@');
+    if (rLevel > 0 && rDir !== 0) cmds.push(rDir > 0 ? '3' : '#', rDir > 0 ? '4' : '$');
     if (cmds.length > 0) void b.send(cmds.join(''));
   }, []);
 

@@ -800,16 +800,19 @@ export default function PlayPage() {
     lastJoyRef.current = { t: now, signature: sig };
 
     const cmds: string[] = [];
+    // 차동 조향 — 회로도 (5/11 PM) 기준:
+    //   왼쪽 페어 = M1(앞왼) + M2(뒤왼) = PWM idx 0,1 = X0,X1
+    //   오른쪽 페어 = M3(앞오) + M4(뒤오) = PWM idx 2,3 = X2,X3
     if (v13) {
-      cmds.push(`X1${lLevel}`, `X2${lLevel}`, `X0${rLevel}`, `X3${rLevel}`);
+      cmds.push(`X0${lLevel}`, `X1${lLevel}`, `X2${rLevel}`, `X3${rLevel}`);
     }
     if (lLevel > 0 && lDir !== 0) {
-      cmds.push(lDir > 0 ? '1' : '!');
-      cmds.push(lDir > 0 ? '3' : '#');
+      cmds.push(lDir > 0 ? '1' : '!');   // M1 앞왼
+      cmds.push(lDir > 0 ? '2' : '@');   // M2 뒤왼
     }
     if (rLevel > 0 && rDir !== 0) {
-      cmds.push(rDir > 0 ? '2' : '@');
-      cmds.push(rDir > 0 ? '4' : '$');
+      cmds.push(rDir > 0 ? '3' : '#');   // M3 앞오
+      cmds.push(rDir > 0 ? '4' : '$');   // M4 뒤오
     }
     if (cmds.length > 0) void b.send(cmds.join(''));
   }, []);   // ★ deps 비움 — 이게 핵심 fix

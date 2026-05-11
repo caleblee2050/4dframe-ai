@@ -367,8 +367,14 @@ public/fdland/              — 4D Land 디자인 자산 (현재 미사용)
 - **사용자 보드 펌웨어**: v1.3.3 (Ami5_V01)
 - **펌웨어 컴파일**: `arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328 --build-path "$(pwd)/build" 04_Base_Program/MechatronicsController/`
 - **펌웨어 플래시**: `python3.14 stk500_flash.py 04_Base_Program/MechatronicsController/build/MechatronicsController.ino.hex`
-- **모터 매핑 v1.3.3**: D5=M2, D6=M1, D9=M3, D10=M4 (PWM)
+- **모터 매핑 v1.3.3** (5/11 PM 회로도 입수 후 정정):
+  - M1 = LM_A = **앞왼쪽** (dir D8/A0, PWM D5, idx 0)
+  - M2 = LM_B = **뒤왼쪽** (dir A1/A2, PWM D6, idx 1)
+  - M3 = RM_A = **앞오른쪽** (dir A3/A4, PWM D9, idx 2, 펌웨어 IN 거울 → defaultDir -1)
+  - M4 = RM_B = **뒤오른쪽** (dir D13/A5, PWM D10, idx 3)
+  - 차동 조향: 좌측 페어=M1+M2, 우측 페어=M3+M4. 이전엔 M1+M3 / M2+M4 (앞/뒤 쌍) 로 잘못 묶여 조이스틱 회전 실패. 5/11 PM 정정.
 - **서보 매핑**: D3=SA(입), D11=SB(꼬리), ±15도
+- **D4 핀 공유 주의**: 펌웨어 v1.4 (Software Serial BLE) 가 D4 를 BLE_RX 로 사용. 보드의 LED_A 가 같은 D4 라 LED ON 시 BLE 신호 간섭 가능 — 현재 앱에서 LED 미사용이라 영향 없음.
 - **timer 충돌**: Servo 라이브러리 = timer1 → D9, D10 PWM 영향 (v1.3.3 동적 detach + 명시 reset 으로 해결)
 - **Vercel AI Gateway**: VERCEL_OIDC_TOKEN 자동 인증, claude-sonnet-4-6
 - **TTS**: gemini-3.1-flash-tts-preview (직접 Gemini API, Gateway 미지원)

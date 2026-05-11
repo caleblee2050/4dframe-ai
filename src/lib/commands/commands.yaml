@@ -178,11 +178,12 @@ artwork_aliases:
 
   car_4wd:
     label_kr: 자동차
+    # 5/11 PM 회로도 입수 기준 정정 — 펌웨어 M1/M2/M3/M4 가 IN1/IN2 핀으로 어떤 물리 모터를 잡는지 직접 확인.
     motor_aliases:
-      "앞왼쪽": M1
-      "앞오른쪽": M2
-      "뒤왼쪽": M3
-      "뒤오른쪽": M4
+      "앞왼쪽": M1   # LM_A — D8/A0 dir + D5 PWM
+      "뒤왼쪽": M2   # LM_B — A1/A2 dir + D6 PWM
+      "앞오른쪽": M3 # RM_A — A3/A4 dir + D9 PWM
+      "뒤오른쪽": M4 # RM_B — D13/A5 dir + D10 PWM
 
   swing:
     label_kr: 회전그네
