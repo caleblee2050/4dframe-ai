@@ -748,17 +748,36 @@ export default function SimplePlayPage() {
           {/* 컨트롤 보드 */}
           <div className="tg-control">
             <div className="tg-label">{t('control.label')}</div>
-            <button
-              className={`tg-connect-btn ${isConnected ? '' : 'is-off'}`}
-              onClick={() => void onToggleConnect()}
-              disabled={board.status === 'requesting' || board.status === 'opening'}
-            >
-              <span>{isConnected ? t('control.on') :
-                     board.status === 'requesting' ? t('connect.requesting') :
-                     board.status === 'opening' ? t('connect.opening') :
-                     t('control.off')}</span>
-              <span className="tg-connect-dot" />
-            </button>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <button
+                className={`tg-connect-btn ${isConnected ? '' : 'is-off'}`}
+                onClick={() => void onToggleConnect()}
+                disabled={board.status === 'requesting' || board.status === 'opening'}
+              >
+                <span>{isConnected ? t('control.on') :
+                       board.status === 'requesting' ? t('connect.requesting') :
+                       board.status === 'opening' ? t('connect.opening') :
+                       t('control.off')}</span>
+                <span className="tg-connect-dot" />
+              </button>
+              {/* 📶 BLE 무선 연결 — 펌웨어 v1.4+ 필요. 연결 끊김 시에만 노출. */}
+              {!isConnected && board.status !== 'requesting' && board.status !== 'opening' && (
+                <button
+                  onClick={() => void board.connectBle()}
+                  title={t('control.bleHint')}
+                  aria-label="Bluetooth"
+                  style={{
+                    fontFamily: 'inherit', cursor: 'pointer',
+                    width: 38, height: 38, borderRadius: '50%',
+                    background: '#fff', color: C.textDark,
+                    border: `3px solid ${C.textDark}`,
+                    fontSize: 18, fontWeight: 900,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    padding: 0,
+                  }}
+                >📶</button>
+              )}
+            </div>
           </div>
         </header>
 

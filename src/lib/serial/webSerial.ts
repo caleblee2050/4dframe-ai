@@ -199,18 +199,16 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
         });
       }, 500);
 
-      // 2초 후에도 보드 응답 없으면 baud rate 의심 자동 안내
+      // 2초 후에도 보드 응답 없으면 안내
       setTimeout(() => {
         const s = useBoardStore.getState();
         if (s.status === 'connected' && !s.lastBoot && !s.lastDistanceCm) {
           useBoardStore.setState({
             errorMessage:
-              '⚠️ BLE 연결은 됐지만 보드 응답이 없어요. 가장 흔한 원인:\n\n' +
-              '1️⃣ 9V 배터리 — 모터는 9V 외부 전원이 필요해요. USB 만으로는 모터가 안 돕니다.\n\n' +
-              '2️⃣ BLE 모듈 baud rate — JDY-23 의 default 는 9600 인데 보드 펌웨어는 115200 사용. ' +
-              '한 번만 USB 로 보드 연결 → 시리얼 모니터에서 "AT+BAUD9" 보내 BLE 모듈을 115200 으로 영구 설정 필요. ' +
-              '(설정 후 보드 재부팅하면 끝)\n\n' +
-              '3️⃣ BLE 모듈이 보드 hardware UART (D0/D1) 에 안 연결되어 있을 가능성도 있어요.',
+              '⚠️ BLE 연결은 됐지만 보드 응답이 없어요. 점검:\n\n' +
+              '1️⃣ 펌웨어 v1.4+ 인지 — v1.3.x 는 BLE 미지원. USB 로 한 번 연결 후 BOOT:Ami5_V01:FW1.4 확인.\n\n' +
+              '2️⃣ 9V 배터리 — 모터/서보는 9V 필요.\n\n' +
+              '3️⃣ BLE 모듈이 D4(RX)/D12(TX) 에 정상 결선됐는지 (회로도 기준).',
           });
         }
       }, 2000);
