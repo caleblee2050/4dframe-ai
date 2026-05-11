@@ -53,57 +53,72 @@ body {
 
 /* ThinkGen kid UI skin */
 .thinkgen-simple {
-  --tg-aqua: #9be4e1;
+  --tg-aqua: #BFE6E7;
+  --tg-aqua-deep: #70C1BE;
   --tg-cream: #fff3df;
   --tg-dot: #94dddf;
   --tg-purple: #3f087f;
+  --tg-side-text: #5BAEAD;
   --tg-ink: #110514;
   --tg-yellow: #ffef35;
   --tg-card-shadow: #9be4e1;
-  --tg-side-pad: clamp(28px, 3.8vw, 72px);
   min-height: 100dvh;
   display: grid;
-  grid-template-columns: clamp(360px, 28.9vw, 555px) 1fr;
+  grid-template-columns: clamp(420px, 32vw, 660px) 1fr;
+  gap: clamp(18px, 1.4vw, 28px);
+  padding: clamp(14px, 1.4vw, 28px);
   color: var(--tg-ink);
-  background: var(--tg-cream);
+  background-color: var(--tg-cream);
+  background-image: url('/thinkgen/main-background.png');
+  background-repeat: no-repeat;
+  background-position: center top;
+  background-size: 100% 100%;
   font-family: var(--font-jua), var(--font-noto-sans-kr), system-ui, sans-serif;
   letter-spacing: 0;
 }
 
 .tg-sidebar {
-  min-height: 100dvh;
   background: var(--tg-aqua);
-  padding: 52px clamp(24px, 1.5vw, 28px) 42px clamp(32px, 3.75vw, 72px);
+  padding: clamp(36px, 3.1vw, 58px) clamp(30px, 2vw, 40px) clamp(32px, 2.8vw, 48px);
   display: flex;
   flex-direction: column;
-  gap: clamp(58px, 4.5vw, 86px);
+  gap: clamp(28px, 2.5vw, 46px);
+  border-radius: 28px;
+  border: 2px solid rgba(125, 205, 201, 0.7);
+  box-shadow: 7px 8px 0 rgba(116, 102, 84, 0.22);
+  align-self: start;
+  position: sticky;
+  top: clamp(14px, 1.4vw, 28px);
+  height: calc(100dvh - clamp(28px, 2.8vw, 56px));
+  max-height: calc(100dvh - clamp(28px, 2.8vw, 56px));
+  overflow-y: auto;
 }
 
 .tg-logo-wrap {
-  color: var(--tg-purple);
+  color: var(--tg-side-text, #2E6E6B);
 }
 
 .tg-logo-subtitle {
-  margin-bottom: 8px;
-  color: var(--tg-purple);
-  font-size: clamp(20px, 1.45vw, 28px);
+  margin: -4px 0 0 8px;
+  color: var(--tg-side-text, #2E6E6B);
+  font-size: clamp(22px, 1.5vw, 30px);
   font-weight: 900;
   line-height: 1.1;
 }
 
 .tg-logo-img {
-  width: calc(100% + 28px);
+  width: calc(100% - 14px);
   max-width: none;
   height: auto;
   display: block;
-  margin: 2px 0 0 -8px;
+  margin: 0 0 0 -4px;
   object-fit: contain;
 }
 
 .tg-section-title {
   margin: 0 0 14px;
-  color: var(--tg-purple);
-  font-size: clamp(32px, 2.15vw, 43px);
+  color: var(--tg-side-text, #2E6E6B);
+  font-size: clamp(34px, 2.25vw, 47px);
   font-weight: 900;
   line-height: 1;
 }
@@ -224,9 +239,11 @@ body {
   display: flex;
   flex-direction: column;
   background-color: var(--tg-cream);
-  background-image: radial-gradient(circle, var(--tg-dot) 4px, transparent 4.5px);
-  background-position: 18px 16px;
-  background-size: 62px 79px;
+  background-image: url('/thinkgen/main-background.png');
+  background-repeat: no-repeat;
+  background-position: center top;
+  background-size: 100% 100%;
+  background-attachment: local;
 }
 
 .tg-topbar {
@@ -533,11 +550,11 @@ body {
 }
 
 .tg-character-img {
-  width: clamp(70px, 4.9vw, 96px);
-  height: clamp(70px, 4.9vw, 96px);
+  width: clamp(64px, 4.4vw, 90px);
+  height: auto;
   object-fit: contain;
   flex: 0 0 auto;
-  filter: drop-shadow(0 7px 0 rgba(63, 8, 127, 0.1));
+  filter: drop-shadow(0 6px 0 rgba(63, 8, 127, 0.1));
 }
 
 .tg-character-message {
@@ -611,6 +628,884 @@ body {
   --foreground: #110514;
   --accent: #3f087f;
   --accent-secondary: #9be4e1;
+}
+
+/* ── ThinkGen Landing (작품 선택 전 메인 화면 — 카드 3장) ─────────── */
+
+.thinkgen-landing {
+  --tg-aqua: #9be4e1;
+  --tg-cream: #fff3df;
+  --tg-purple: #3f087f;
+  --tg-ink: #110514;
+  --tg-yellow: #ffef35;
+  --tg-card-shadow: #9be4e1;
+  --tg-side-text: #2E6E6B;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(28px, 3vw, 56px) clamp(28px, 4vw, 72px) clamp(28px, 3vw, 48px);
+  background-color: var(--tg-cream);
+  background-image: url('/thinkgen/main-background.png');
+  background-repeat: no-repeat;
+  background-position: center top;
+  background-size: cover;
+  color: var(--tg-ink);
+  font-family: var(--font-jua), var(--font-noto-sans-kr), system-ui, sans-serif;
+}
+
+.tg-landing-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: clamp(18px, 2vw, 36px);
+}
+
+.tg-landing-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.tg-landing-logo {
+  width: clamp(280px, 26vw, 460px);
+  height: auto;
+  display: block;
+}
+
+.tg-landing-subtitle {
+  margin: 2px 0 0 6px;
+  color: var(--tg-side-text);
+  font-size: clamp(18px, 1.4vw, 26px);
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.tg-landing-cards {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(18px, 2.6vw, 56px);
+  align-items: center;
+  justify-items: center;
+  padding: 0 clamp(0px, 3vw, 48px);
+}
+
+.tg-landing-card {
+  width: 100%;
+  max-width: 280px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  filter: drop-shadow(3px 5px 0 rgba(63, 8, 127, 0.12));
+  transition: transform 220ms cubic-bezier(0.175, 0.885, 0.32, 1.275),
+              filter 220ms ease;
+}
+
+.tg-landing-card:hover {
+  transform: translateY(-8px) scale(1.025);
+  filter: drop-shadow(4px 8px 0 rgba(63, 8, 127, 0.18));
+}
+
+.tg-landing-card:active {
+  transform: translateY(-2px) scale(0.99);
+}
+
+.tg-landing-card img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.tg-landing-bottom {
+  flex: 0 0 auto;
+  margin-top: clamp(16px, 2vw, 28px);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.tg-landing-bar {
+  flex: 1;
+  min-height: 76px;
+  padding: 12px 22px 12px 18px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  border: 1.5px solid var(--tg-ink);
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 8px 9px 0 var(--tg-card-shadow);
+}
+
+.tg-landing-bar-jelly {
+  width: clamp(50px, 4.6vw, 78px);
+  height: auto;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 5px 0 rgba(63, 8, 127, 0.1));
+}
+
+.tg-landing-bar-text {
+  flex: 1;
+  color: #88E8E6;
+  font-size: clamp(22px, 1.7vw, 32px);
+  font-weight: 400;
+  line-height: 1.18;
+}
+
+.tg-landing-icons {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+}
+
+/* ── 카드 스킬 (C/O/P) 새 디자인 버튼 ─────────────────── */
+
+.tg-card-skill-box {
+  margin-top: 12px;
+  padding: 14px;
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  border-radius: 12px;
+}
+
+.tg-card-key-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tg-card-key-btn {
+  width: 100%;
+  min-height: 58px;
+  padding: 6px 20px 6px 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 2.5px solid #5BB3AE;
+  border-radius: 999px;
+  background: #FFFEF6;
+  color: #2E6E6B;
+  cursor: pointer;
+  font-family: var(--font-outfit), var(--font-jua), sans-serif;
+  font-weight: 800;
+  box-shadow: 2px 3px 0 rgba(91, 179, 174, 0.45);
+  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+}
+
+.tg-card-key-btn:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 4px 0 rgba(91, 179, 174, 0.55);
+}
+
+.tg-card-key-btn:active:not(:disabled) {
+  transform: translate(1px, 2px);
+  box-shadow: 1px 1px 0 rgba(91, 179, 174, 0.4);
+}
+
+.tg-card-key-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.tg-card-key-badge {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  border: 2px solid #5BB3AE;
+  border-radius: 999px;
+  background: #B7EEEB;
+  color: #2E6E6B;
+  font-family: var(--font-outfit), var(--font-jua), sans-serif;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tg-card-key-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: clamp(18px, 1.2vw, 23px);
+}
+
+.tg-card-key-en {
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.tg-card-key-divider {
+  display: inline-block;
+  width: 2px;
+  height: 18px;
+  background: #5BB3AE;
+  opacity: 0.55;
+  border-radius: 1px;
+}
+
+.tg-card-key-ko {
+  font-weight: 700;
+}
+
+.tg-card-skill-thumb {
+  width: clamp(92px, 8.2vw, 132px);
+  height: auto;
+  flex: 0 0 auto;
+  align-self: center;
+  cursor: pointer;
+  filter: drop-shadow(2px 3px 0 rgba(63, 8, 127, 0.16));
+  transition: transform 160ms ease;
+}
+
+.tg-card-skill-thumb:hover {
+  transform: translateY(-2px);
+}
+
+.tg-card-skill-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.tg-card-skill-gear,
+.tg-card-skill-toggle {
+  width: 50px;
+  height: 50px;
+  flex: 0 0 auto;
+  border: 2px solid var(--tg-side-text, #2E6E6B);
+  background: #FFFEF6;
+  border-radius: 999px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--tg-side-text, #2E6E6B);
+  font-family: inherit;
+  font-size: 22px;
+  box-shadow: 2px 3px 0 rgba(91, 179, 174, 0.4);
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.tg-card-skill-gear:hover {
+  transform: rotate(30deg) translate(-1px, -1px);
+}
+
+.tg-card-skill-gear img {
+  width: 33px;
+  height: 33px;
+}
+
+.tg-card-skill-toggle.is-on {
+  background: #B7EEEB;
+}
+
+.tg-card-skill-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.tg-card-skill-toggle .tg-toggle-label {
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  position: absolute;
+  bottom: -16px;
+  background: var(--tg-side-text, #2E6E6B);
+  color: #FFFEF6;
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+@media (max-width: 900px) {
+  .tg-landing-cards {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+}
+
+/* ── 사이드바: 헤더(섹션 타이틀 + 연결 토글) ───────── */
+
+.tg-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.tg-sidebar-header .tg-section-title {
+  margin: 0;
+}
+
+/* 연결 / 끊김 segmented pill 토글 */
+.tg-connect-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  gap: 2px;
+  border: 2px solid #5BB3AE;
+  border-radius: 999px;
+  background: #FFFEF6;
+  box-shadow: 2px 2px 0 rgba(91, 179, 174, 0.35);
+}
+
+.tg-connect-pill-seg {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #2E6E6B;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.tg-connect-pill-seg.is-on {
+  background: #B7EEEB;
+  color: #2E6E6B;
+}
+
+.tg-connect-pill-seg.is-warn {
+  background: #FF5C8A;
+  color: #fff;
+}
+
+.tg-connect-pill-seg:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ── 항상 3칸 스킬 슬롯 (1/2/3 — 비어있어도 표시) ── */
+
+.tg-skill-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.tg-skill-slot {
+  position: relative;
+  width: 100%;
+  min-height: 82px;
+  padding: 7px 14px 7px 7px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 2.5px solid #5BB3AE;
+  border-radius: 999px;
+  background: #FFFEF6;
+  color: #2E6E6B;
+  cursor: pointer;
+  font-family: var(--font-jua), var(--font-noto-sans-kr), sans-serif;
+  box-shadow: 4px 5px 0 rgba(91, 179, 174, 0.45);
+  transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+}
+
+.tg-skill-slot:hover:not(.is-empty):not(:disabled) {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 6px 0 rgba(91, 179, 174, 0.55);
+}
+
+.tg-skill-slot:active:not(.is-empty):not(:disabled) {
+  transform: translate(2px, 3px);
+  box-shadow: 1px 1px 0 rgba(91, 179, 174, 0.4);
+}
+
+.tg-skill-slot.is-empty {
+  cursor: default;
+  background: #FFFEF6;
+  opacity: 0.75;
+}
+
+.tg-skill-slot[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.tg-skill-slot-badge {
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  border: 2.5px solid #5BB3AE;
+  border-radius: 999px;
+  background: #B7EEEB;
+  color: #2E6E6B;
+  font-family: var(--font-outfit), var(--font-jua), sans-serif;
+  font-size: 30px;
+  font-weight: 900;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tg-skill-slot-label {
+  flex: 1;
+  min-width: 0;
+  font-size: clamp(20px, 1.42vw, 29px);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tg-skill-slot-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-right: 4px;
+}
+
+.tg-skill-slot-action {
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.tg-skill-slot-action:hover {
+  background: rgba(91, 179, 174, 0.18);
+  transform: scale(1.1);
+}
+
+.tg-skill-slot-action img {
+  width: 36px;
+  height: 36px;
+  display: block;
+}
+
+/* ── 중앙 스테이지 (조이스틱/카메라/카드 큰 표시) ─────── */
+
+.tg-stage {
+  flex: 1;
+  min-height: 0;
+  /* 사이드바와 시각 균형 — 스테이지가 가용 높이를 다 먹지 않도록 상한 */
+  max-height: clamp(390px, 54vh, 560px);
+  align-self: center;
+  width: 100%;
+  max-width: clamp(520px, 58vw, 820px);
+  margin: 0 auto clamp(18px, 1.8vw, 32px);
+  border: 2px solid rgba(91, 179, 174, 0.55);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(14px, 1.8vw, 28px);
+  box-shadow: 6px 8px 0 rgba(91, 179, 174, 0.16);
+  overflow: hidden;
+}
+
+.tg-stage img.tg-stage-empty {
+  width: auto !important;
+  height: auto !important;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  opacity: 0.92;
+  filter: drop-shadow(3px 5px 0 rgba(63, 8, 127, 0.12));
+}
+
+.tg-stage-joystick {
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+}
+
+.tg-stage-joystick-label {
+  font-size: clamp(20px, 1.6vw, 28px);
+  font-weight: 900;
+  color: var(--tg-purple);
+  text-align: center;
+}
+
+.tg-stage-joystick-hint {
+  font-size: 14px;
+  color: rgba(63, 8, 127, 0.6);
+}
+
+.tg-stage-camera {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+/* ── 카메라/마이크 아이콘 버튼 (네모 아이콘 박스) ─── */
+
+.tg-action-btn {
+  width: 66px;
+  height: 66px;
+  flex: 0 0 auto;
+  border: 2px solid var(--tg-ink);
+  border-radius: 13px;
+  background: #D2C4B2;
+  cursor: pointer;
+  padding: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 3px 3px 0 rgba(63, 8, 127, 0.18);
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.tg-action-btn:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 rgba(63, 8, 127, 0.22);
+}
+
+.tg-action-btn.is-camera {
+  background: #B7EEEB;
+}
+
+.tg-action-btn.is-active {
+  background: #5BB3AE;
+}
+
+.tg-action-btn.is-active img {
+  filter: brightness(0) invert(1);
+}
+
+.tg-action-btn img {
+  width: 38px;
+  height: 38px;
+  display: block;
+}
+
+/* ── 메인 영역 — 상단바 제거 후 새 구조 ─────────── */
+
+.tg-main-clean {
+  min-width: 0;
+  min-height: calc(100dvh - clamp(28px, 2.8vw, 56px));
+  padding: clamp(26px, 2.2vw, 42px) clamp(20px, 2vw, 36px) clamp(18px, 1.9vw, 34px);
+  display: flex;
+  flex-direction: column;
+}
+
+.tg-prompt-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  margin-top: auto;
+}
+
+/* 통합 입력 박스 — 새 구조가 기존 .tg-prompt-card 의 min-height 150px 를 override 해야 한다.
+   selector specificity 강화 + 명시적 값. */
+.tg-prompt-row .tg-prompt-card.tg-prompt-card-with-jelly {
+  flex: 1;
+  min-width: 0;
+  min-height: 176px;
+  max-height: 176px;
+  margin-bottom: 0;
+  padding: 16px 88px 16px 18px;
+  border-radius: 22px;
+  border: 1.5px solid var(--tg-aqua-deep, #7DCDC9);
+  background: #fff;
+  box-shadow: 8px 8px 0 rgba(116, 102, 84, 0.22);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+}
+
+/* Image 인라인 width/height 보다 우선되게 — 명시 단위 + !important 한 번만 */
+.tg-prompt-row .tg-prompt-card.tg-prompt-card-with-jelly img.tg-prompt-jelly-inside {
+  width: clamp(92px, 6.2vw, 128px) !important;
+  height: auto !important;
+  flex: 0 0 auto;
+  align-self: center;
+  filter: drop-shadow(0 4px 0 rgba(63, 8, 127, 0.08));
+}
+
+.tg-prompt-card-with-jelly .tg-prompt-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 96px;
+  max-height: 132px;
+  padding: 0;
+  color: var(--tg-side-text, #2E6E6B);
+  font-weight: 700;
+  font-size: clamp(32px, 2.2vw, 45px);
+  line-height: 1.25;
+}
+
+.tg-prompt-card-with-jelly .tg-prompt-input::placeholder {
+  color: var(--tg-side-text, #2E6E6B);
+  opacity: 0.95;
+  font-weight: 700;
+}
+
+.tg-prompt-send {
+  position: absolute;
+  right: 20px;
+  bottom: 50%;
+  transform: translateY(50%);
+  width: 58px;
+  height: 58px;
+  padding: 0 0 0 3px;             /* ▶ 글리프 시각 중심 보정 */
+  border: 2px solid var(--tg-side-text, #2E6E6B);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--tg-side-text, #2E6E6B);
+  cursor: pointer;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 3px 4px 0 rgba(91, 179, 174, 0.35);
+  transition: transform 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.tg-prompt-send:hover:not(:disabled) {
+  transform: translateY(50%) translate(-1px, -1px);
+  background: var(--tg-aqua-deep, #7DCDC9);
+  color: #fff;
+}
+
+.tg-prompt-send:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.tg-prompt-row-icons {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 1800px), (max-height: 980px) {
+  .thinkgen-simple {
+    grid-template-columns: clamp(390px, 31.5vw, 560px) 1fr;
+    gap: clamp(14px, 1.2vw, 22px);
+    padding: clamp(12px, 1.2vw, 24px);
+  }
+
+  .tg-sidebar {
+    padding: clamp(22px, 2.3vw, 36px) clamp(24px, 1.8vw, 34px) clamp(20px, 2vw, 32px);
+    gap: clamp(14px, 1.55vw, 26px);
+    top: clamp(12px, 1.2vw, 24px);
+    height: calc(100dvh - clamp(24px, 2.4vw, 48px));
+    max-height: calc(100dvh - clamp(24px, 2.4vw, 48px));
+  }
+
+  .tg-logo-img {
+    width: calc(100% - 48px);
+  }
+
+  .tg-logo-subtitle {
+    font-size: clamp(18px, 1.35vw, 24px);
+  }
+
+  .tg-section-title {
+    font-size: clamp(28px, 2vw, 39px);
+  }
+
+  .tg-skill-slot-list {
+    gap: 14px;
+  }
+
+  .tg-skill-slot {
+    min-height: 64px;
+    gap: 12px;
+  }
+
+  .tg-skill-slot-badge {
+    width: 48px;
+    height: 48px;
+    font-size: 24px;
+  }
+
+  .tg-skill-slot-label {
+    font-size: clamp(18px, 1.25vw, 24px);
+  }
+
+  .tg-skill-slot-action {
+    width: 40px;
+    height: 40px;
+  }
+
+  .tg-skill-slot-action img {
+    width: 28px;
+    height: 28px;
+  }
+
+  .tg-card-key-btn {
+    min-height: 46px;
+  }
+
+  .tg-card-key-badge {
+    width: 36px;
+    height: 36px;
+    font-size: 18px;
+  }
+
+  .tg-card-key-label {
+    font-size: clamp(16px, 1.05vw, 20px);
+  }
+
+  .tg-card-skill-thumb {
+    width: clamp(76px, 6.5vw, 104px);
+  }
+
+  .tg-main-clean {
+    padding: clamp(20px, 1.8vw, 34px) clamp(16px, 1.7vw, 30px) clamp(16px, 1.6vw, 28px);
+  }
+
+  .tg-stage {
+    max-width: clamp(500px, 56vw, 760px);
+    max-height: clamp(330px, 50vh, 500px);
+    margin-bottom: clamp(14px, 1.4vw, 24px);
+  }
+
+  .tg-prompt-row .tg-prompt-card.tg-prompt-card-with-jelly {
+    min-height: 148px;
+    max-height: 148px;
+    padding: 14px 78px 14px 16px;
+  }
+
+  .tg-prompt-row .tg-prompt-card.tg-prompt-card-with-jelly img.tg-prompt-jelly-inside {
+    width: clamp(76px, 5.6vw, 104px) !important;
+  }
+
+  .tg-prompt-card-with-jelly .tg-prompt-input {
+    min-height: 78px;
+    max-height: 108px;
+    font-size: clamp(26px, 1.9vw, 36px);
+  }
+
+  .tg-prompt-send {
+    width: 52px;
+    height: 52px;
+    right: 16px;
+  }
+
+  .tg-action-btn {
+    width: 58px;
+    height: 58px;
+    padding: 9px;
+  }
+
+  .tg-action-btn img {
+    width: 34px;
+    height: 34px;
+  }
+}
+
+@media (max-height: 860px) {
+  .thinkgen-simple {
+    grid-template-columns: clamp(370px, 30.5vw, 520px) 1fr;
+  }
+
+  .tg-sidebar {
+    padding-top: clamp(18px, 2vw, 28px);
+    padding-bottom: clamp(16px, 1.7vw, 24px);
+    gap: clamp(10px, 1.2vw, 18px);
+  }
+
+  .tg-logo-img {
+    width: calc(100% - 82px);
+  }
+
+  .tg-logo-subtitle {
+    font-size: clamp(16px, 1.2vw, 21px);
+  }
+
+  .tg-section-title {
+    font-size: clamp(25px, 1.75vw, 34px);
+  }
+
+  .tg-sidebar-header {
+    margin-bottom: 10px;
+  }
+
+  .tg-skill-slot-list {
+    gap: 10px;
+  }
+
+  .tg-skill-slot {
+    min-height: 58px;
+  }
+
+  .tg-skill-slot-badge {
+    width: 42px;
+    height: 42px;
+    font-size: 22px;
+  }
+
+  .tg-skill-slot-label {
+    font-size: clamp(16px, 1.1vw, 21px);
+  }
+
+  .tg-card-skill-box {
+    margin-top: 8px;
+    padding: 8px;
+    gap: 10px;
+  }
+
+  .tg-card-key-list {
+    gap: 8px;
+  }
+
+  .tg-card-key-btn {
+    min-height: 42px;
+  }
+
+  .tg-card-skill-thumb {
+    width: clamp(68px, 6vw, 92px);
+  }
+
+  .tg-advanced-link {
+    margin-top: 14px;
+  }
+
+  .tg-stage {
+    max-height: clamp(300px, 48vh, 420px);
+  }
+
+  .tg-prompt-row .tg-prompt-card.tg-prompt-card-with-jelly {
+    min-height: 132px;
+    max-height: 132px;
+  }
+
+  .tg-prompt-card-with-jelly .tg-prompt-input {
+    font-size: clamp(24px, 1.7vw, 32px);
+  }
 }
 
 @media (max-width: 1100px) {

@@ -16,17 +16,20 @@ interface Props {
   onMove?: (x: number, y: number, mag: number) => void;
   disabled?: boolean;
   colors: { primary: string; primaryLight: string; border: string; textMuted: string };
+  // 시각 크기 — 기본 200px. /play/simple 의 큰 스테이지에서는 더 크게.
+  size?: number;
 }
 
-const SIZE = 200;
-const THUMB = 52;
-const RADIUS = SIZE / 2;
-const DEAD_ZONE = 8;                                    // 정밀 제어: 데드존 최소화
-const MAX_REACH = RADIUS - THUMB / 2;                   // 썸 중심이 도달 가능한 최대 반경
-const ACTIVE_SPAN = MAX_REACH - DEAD_ZONE;              // mag 정규화 분모
+const DEFAULT_SIZE = 200;
 const LEVELS = 9;                                        // V1~V9 — 시각 가이드 링도 9개
 
-export function Joystick({ onDirection, onMove, disabled, colors }: Props) {
+export function Joystick({ onDirection, onMove, disabled, colors, size = DEFAULT_SIZE }: Props) {
+  const SIZE = size;
+  const THUMB = Math.round(size * 0.26);
+  const RADIUS = SIZE / 2;
+  const DEAD_ZONE = Math.max(6, Math.round(size * 0.04));
+  const MAX_REACH = RADIUS - THUMB / 2;
+  const ACTIVE_SPAN = MAX_REACH - DEAD_ZONE;
   const baseRef = useRef<HTMLDivElement | null>(null);
   const [thumbPos, setThumbPos] = useState({ x: 0, y: 0 });
   const [currentLevel, setCurrentLevel] = useState(0);   // 0~9 — UI 하이라이트용

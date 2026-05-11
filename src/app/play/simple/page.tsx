@@ -27,13 +27,18 @@ import { Joystick } from '@/components/play/Joystick';
 import { CameraPanel } from '@/components/play/CameraPanel';
 import { useGestureMappingStore, actionById, fingerCountToKey, GESTURE_LABELS } from '@/lib/gestures/mappingStore';
 
-const ARTWORKS: Array<{ id: NonNullable<PromptContext['artwork']>; tKey: string; emoji: string }> = [
-  { id: 'free',      tKey: 'artwork.free',      emoji: '🛠️' },
-  { id: 'viking',    tKey: 'artwork.viking',    emoji: '🚣' },
-  { id: 'car_4wd',   tKey: 'artwork.car_4wd',   emoji: '🚗' },
-  { id: 'swing',     tKey: 'artwork.swing',     emoji: '🎠' },
-  { id: 'crocodile', tKey: 'artwork.crocodile', emoji: '🐊' },
-  { id: 'ballerina', tKey: 'artwork.ballerina', emoji: '🩰' },
+// 학생용 단순 모드 = 카드 3장으로 축소 (자동차/악어/회전그네).
+// 다른 작품(free/viking/ballerina)은 고급 모드(/play)에서만 사용.
+const ARTWORKS: Array<{
+  id: NonNullable<PromptContext['artwork']>;
+  tKey: string;
+  emoji: string;
+  card: string;       // 메인(랜딩) 화면에 깔리는 큰 카드 이미지
+  cardSmall: string;  // 작품 선택 후 사이드바 하단 "카드 스킬" 섹션의 작은 카드
+}> = [
+  { id: 'car_4wd',   tKey: 'artwork.car_4wd',   emoji: '🚗', card: '/thinkgen/card-frame-car.png',       cardSmall: '/thinkgen/card-frame-car.png' },
+  { id: 'crocodile', tKey: 'artwork.crocodile', emoji: '🐊', card: '/thinkgen/card-frame-crocodile.png', cardSmall: '/thinkgen/card-frame-crocodile.png' },
+  { id: 'swing',     tKey: 'artwork.swing',     emoji: '🎠', card: '/thinkgen/card-frame-ballerina.png', cardSmall: '/thinkgen/card-frame-ballerina.png' },
 ];
 
 const C = {
@@ -63,24 +68,28 @@ export default function SimplePlayPage() {
   const { locale, setLocale, t } = useI18nStore();
 
   // === State ===
-  const [artwork, setArtwork] = useState<NonNullable<PromptContext['artwork']>>('crocodile');
+  // artwork = null → 랜딩(카드 3장) 화면. 카드를 클릭하면 해당 작품이 선택되어 작업 화면으로 진입.
+  const [artwork, setArtwork] = useState<NonNullable<PromptContext['artwork']> | null>(null);
   const [input, setInput] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [history, setHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
-  const [projectOpen, setProjectOpen] = useState(false);
   // 거리 반응 모드 — AI 가 거리센서 값에 반응하는 program 생성 가능 (sendPrompt context 에 전달)
   const [distanceReactivity, setDistanceReactivity] = useState(false);
   // 설정 모달 (부모용)
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 연결 방식 선택 모달 (USB / BLE)
+  const [connectModalOpen, setConnectModalOpen] = useState(false);
 
   // === Refs ===
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const projectMenuRef = useRef<HTMLDivElement | null>(null);
   // 마지막 실행한 program — save_skill step 이 이 program 을 customSkill 로 저장
   const lastProgramRef = useRef<Program | null>(null);
+  // 마지막 실행한 "스킬" (built-in 또는 custom). 카드 스킬 섹션의 P (Play) 버튼이 이 스킬을 재실행.
+  // null 이면 "내가 만든 스킬" 첫 번째 → built-in 첫 번째 순으로 폴백.
+  const lastRunSkillRef = useRef<Skill | CustomSkill | null>(null);
 
   // === Connected flag (effect deps 용 — Computed 보다 먼저 필요) ===
   const isConnectedEarly = board.status === 'connected';
@@ -237,7 +246,7 @@ export default function SimplePlayPage() {
 
   // === Computed ===
   const isConnected = board.status === 'connected';
-  const builtIn = skillsForArtwork(artwork);
+  const builtIn = skillsForArtwork(artwork ?? undefined);
   // 쉬운 모드 스킬 = 어른이 고급 모드에서 등록/삭제한 customSkills + built-in.
   // customSkills 우선 (어른 의도) → 부족하면 built-in 채움. 최대 3개 슬롯.
   // simpleHidden=true 인 customSkill 은 노출 X — 설정 모달에서 토글.
@@ -248,12 +257,6 @@ export default function SimplePlayPage() {
   const allSkills: (Skill | CustomSkill)[] = [...customs, ...visibleBuiltIn].slice(0, 3);
   // 설정 모달의 "내 스킬 관리" 용 — hidden 포함 전체 list (custom + built-in)
   const allCustomsForArtwork = customSkillsStore.skills.filter((s) => s.artwork === artwork);
-
-  // === Connect ===
-  const onToggleConnect = async () => {
-    if (isConnected) await board.disconnect();
-    else await board.connect();
-  };
 
   // === Execute Program ===
   const executeProgram = useCallback(async (prog: Program) => {
@@ -323,7 +326,7 @@ export default function SimplePlayPage() {
     setHistory(newHistory);
     try {
       const ctx: PromptContext = {
-        artwork,
+        artwork: artwork ?? undefined,
         distanceReactivityEnabled: distanceReactivity,
         motorThresholds: cal.current.startThreshold,
         lastDistanceCm: board.lastDistanceCm,
@@ -411,11 +414,33 @@ export default function SimplePlayPage() {
       return;
     }
     abortRef.current?.abort();
+    lastRunSkillRef.current = skill;
     // 정교 sync 가 필요한 스킬은 executor 사용 (program 무시)
     if ('execute' in skill && typeof skill.execute === 'function') {
       void runSkillExecutor(skill as Skill);
     } else {
       void executeProgram(skill.program);
+    }
+  };
+
+  // P 버튼 — 카드 스킬 섹션의 "Play". 마지막 실행 스킬 우선, 없으면 첫 visible 스킬.
+  const onPlayCardSkill = () => {
+    const skill = lastRunSkillRef.current ?? allSkills[0];
+    if (!skill) {
+      setStatusMessage(t('panel.connectFirst'));
+      return;
+    }
+    onRunSkill(skill);
+  };
+
+  // 연결 토글 — 연결됨 상태에서 클릭 = 끊기, 아니면 USB/BLE 선택 모달 열기.
+  const onConnectClick = () => {
+    if (isConnected) {
+      void board.disconnect();
+    } else if (board.status === 'requesting' || board.status === 'opening') {
+      // 진행 중에는 무시
+    } else {
+      setConnectModalOpen(true);
     }
   };
 
@@ -524,17 +549,6 @@ export default function SimplePlayPage() {
     return () => clearTimeout(t);
   }, []);
 
-  useEffect(() => {
-    if (!projectOpen) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!projectMenuRef.current?.contains(event.target as Node)) {
-        setProjectOpen(false);
-      }
-    };
-    window.addEventListener('pointerdown', onPointerDown);
-    return () => window.removeEventListener('pointerdown', onPointerDown);
-  }, [projectOpen]);
-
   // === Basic skill 명령 송신 (서보 ±15도) ===
   const onBasicCmd = async (cmd: string) => {
     if (!isConnected) { setStatusMessage(t('panel.connectFirst')); return; }
@@ -583,96 +597,274 @@ export default function SimplePlayPage() {
     }
   }, [isConnected, servoA, servoB, onServoAdjust]);
 
+  // ════════════ 랜딩 화면 (작품 미선택) — 카드 3장 메인 ════════════
+  if (artwork === null) {
+    return (
+      <div className="thinkgen-landing">
+        <header className="tg-landing-header">
+          <div className="tg-landing-brand">
+            <Image
+              className="tg-landing-logo"
+              src="/thinkgen/main-logo-notagline.png"
+              alt={t('thinkgen.brand')}
+              width={1554}
+              height={509}
+              priority
+            />
+            <div className="tg-landing-subtitle">{t('thinkgen.subtitle')}</div>
+          </div>
+        </header>
+
+        <div className="tg-landing-cards">
+          {ARTWORKS.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              className="tg-landing-card"
+              onClick={() => setArtwork(a.id)}
+              aria-label={t(a.tKey)}
+            >
+              <Image
+                src={a.card}
+                alt={t(a.tKey)}
+                width={520}
+                height={760}
+                priority
+              />
+            </button>
+          ))}
+        </div>
+
+        <div className="tg-landing-bottom">
+          <div className="tg-landing-bar">
+            <Image
+              className="tg-landing-bar-jelly"
+              src="/thinkgen/space-jelly.png"
+              alt="ThinkGen 캐릭터"
+              width={273}
+              height={373}
+              priority
+            />
+            <div className="tg-landing-bar-text">
+              {t('landing.pickFriend')}
+            </div>
+          </div>
+          <div className="tg-landing-icons" aria-label="보조 도구">
+            <button
+              type="button"
+              className="tg-action-btn is-camera"
+              onClick={() => setShowCamera((v) => !v)}
+              title={t('tool.gesture')}
+            >
+              <Image src="/thinkgen/icon-camera.svg" alt="" width={32} height={32} />
+            </button>
+            <button
+              type="button"
+              className="tg-action-btn"
+              onClick={onMicToggle}
+              disabled={isGenerating || isExecuting}
+              title={listening ? t('mic.listening') : t('mic.start')}
+              style={{ animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none' }}
+            >
+              <Image src="/thinkgen/icon-mic.svg" alt="" width={32} height={32} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="thinkgen-simple">
       {/* ════════════ 좌측 사이드바 ════════════ */}
       <aside className="tg-sidebar">
         {/* 로고 */}
         <div className="tg-logo-wrap">
-          <div className="tg-logo-subtitle">{t('thinkgen.subtitle')}</div>
           <Image
             className="tg-logo-img"
-            src="/thinkgen/logo-source-crop-tight.png"
+            src="/thinkgen/main-logo-notagline.png"
             alt={t('thinkgen.brand')}
-            width={485}
-            height={145}
+            width={1554}
+            height={509}
             priority
           />
+          <div className="tg-logo-subtitle">{t('thinkgen.subtitle')}</div>
         </div>
 
-        {/* 나만의 AI 스킬 */}
+        {/* 나만의 AI 스킬 — 항상 3칸 (비어있어도 표시), 연결/끊김 segmented 토글 */}
         <section>
-          <h2 className="tg-section-title">{t('skills.my')}</h2>
-          <div className="tg-skill-list">
-            {allSkills.length === 0 ? (
-              <div className="tg-empty-text">{t('skills.empty')}</div>
-            ) : (
-              allSkills.map((skill, i) => {
-                // built-in 스킬은 i18n key (skill.{id}), custom 스킬은 학생이 붙인 이름 그대로
-                const isBuiltIn = !('createdAt' in skill);
-                const dictKey = `skill.${skill.id}`;
-                const translated = isBuiltIn ? t(dictKey) : skill.label;
-                const display = translated === dictKey ? skill.label : translated;
+          <div className="tg-sidebar-header">
+            <h2 className="tg-section-title">{t('skills.my')}</h2>
+            <div className="tg-connect-pill" role="group" aria-label={t('control.label')}>
+              <button
+                type="button"
+                className={`tg-connect-pill-seg ${isConnected ? 'is-on' : ''}`}
+                onClick={onConnectClick}
+                disabled={board.status === 'requesting' || board.status === 'opening'}
+              >
+                {t('connect.connected')}
+              </button>
+              <button
+                type="button"
+                className={`tg-connect-pill-seg ${!isConnected ? 'is-warn' : ''}`}
+                onClick={onConnectClick}
+                disabled={board.status === 'requesting' || board.status === 'opening'}
+              >
+                {t('connect.disconnected')}
+              </button>
+            </div>
+          </div>
+          <div className="tg-skill-slot-list">
+            {[0, 1, 2].map((i) => {
+              const skill = allSkills[i];
+              if (!skill) {
                 return (
-                  <div key={skill.id} style={{ position: 'relative' }}>
-                    <button
-                      className="tg-skill-btn"
-                      onClick={() => onRunSkill(skill)}
-                      disabled={!isConnected || isExecuting}
-                      style={{ background: SKILL_BG[i] ?? C.mint, width: '100%' }}
-                    >
-                      <span className="tg-skill-index">{i + 1}</span>
-                      <span style={{ flex: 1 }}>{display}</span>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isBuiltIn) {
-                          void customSkillsStore.toggleBuiltinHidden(skill.id);
-                        } else {
-                          void customSkillsStore.toggleSimpleHidden(skill.id);
-                        }
-                      }}
-                      title={t('skills.hide')}
-                      aria-label={t('skills.hide')}
-                      style={{
-                        position: 'absolute', top: 6, right: 8,
-                        width: 22, height: 22, borderRadius: '50%',
-                        background: '#fff', color: C.textDark,
-                        border: `2px solid ${C.textDark}`,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 12, fontWeight: 900, cursor: 'pointer',
-                        padding: 0, lineHeight: 1,
-                        fontFamily: 'inherit',
-                      }}
-                    >
-                      ✕
-                    </button>
+                  <div key={`empty-${i}`} className="tg-skill-slot is-empty" aria-hidden="true">
+                    <span className="tg-skill-slot-badge">{i + 1}</span>
+                    <span className="tg-skill-slot-label" />
                   </div>
                 );
-              })
-            )}
+              }
+              const isBuiltIn = !('createdAt' in skill);
+              const dictKey = `skill.${skill.id}`;
+              const translated = isBuiltIn ? t(dictKey) : skill.label;
+              const display = translated === dictKey ? skill.label : translated;
+              const isSkillDisabled = !isConnected || isExecuting;
+              const onEdit = () => {
+                if (isBuiltIn) {
+                  // built-in 스킬은 코드에 박혀있어서 이름 변경 불가 — 안내만.
+                  setStatusMessage(t('skills.editBuiltin'));
+                  return;
+                }
+                const next = window.prompt(t('skills.renamePrompt'), skill.label);
+                if (next === null) return;            // 취소
+                const trimmed = next.trim();
+                if (trimmed.length === 0) return;
+                void customSkillsStore.rename(skill.id, trimmed);
+              };
+              const onRemove = (e: React.MouseEvent) => {
+                e.stopPropagation();
+                if (isBuiltIn) {
+                  void customSkillsStore.toggleBuiltinHidden(skill.id);
+                } else {
+                  // 사용자가 만든 스킬은 영구 삭제 (DB row 제거) — 단 한번 더 확인.
+                  if (window.confirm(t('skills.confirmRemove').replace('{label}', skill.label))) {
+                    void customSkillsStore.remove(skill.id);
+                  }
+                }
+              };
+              return (
+                <div
+                  key={skill.id}
+                  className="tg-skill-slot"
+                  role="button"
+                  tabIndex={isSkillDisabled ? -1 : 0}
+                  aria-disabled={isSkillDisabled}
+                  onClick={() => {
+                    if (!isSkillDisabled) onRunSkill(skill);
+                  }}
+                  onKeyDown={(e) => {
+                    if (isSkillDisabled) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onRunSkill(skill);
+                    }
+                  }}
+                  title={display}
+                >
+                  <span className="tg-skill-slot-badge">{i + 1}</span>
+                  <span className="tg-skill-slot-label">{display}</span>
+                  <span className="tg-skill-slot-actions">
+                    <button
+                      type="button"
+                      className="tg-skill-slot-action"
+                      onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                      title={t('skills.edit')}
+                      aria-label={t('skills.edit')}
+                    >
+                      <Image src="/thinkgen/icon-edit.svg" alt="" width={20} height={20} />
+                    </button>
+                    <button
+                      type="button"
+                      className="tg-skill-slot-action"
+                      onClick={onRemove}
+                      title={t('skills.hide')}
+                      aria-label={t('skills.hide')}
+                    >
+                      <Image src="/thinkgen/icon-close.svg" alt="" width={20} height={20} />
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </section>
 
-        {/* 화면 하단 — AI 기본 스킬 (서보 ±15° 두 버튼) */}
+        {/* 화면 하단 — "[작품] 카드 스킬" : Close / Open / Play */}
         <section style={{ marginTop: 'auto' }}>
-          <h2 className="tg-section-title">{t('skills.basic')}</h2>
-          <div className="tg-basic-card">
-            {[
-              { id: 'open',  label: t('basic.openMouth'),  cmd: '%', emoji: '😮' },
-              { id: 'close', label: t('basic.closeMouth'), cmd: '5', emoji: '😐' },
-            ].map((b) => (
-              <button
-                key={b.id}
-                className="tg-basic-btn"
-                onClick={() => void onBasicCmd(b.cmd)}
-                disabled={!isConnected}
-              >
-                <span className="tg-basic-key" style={{ fontSize: 18 }}>{b.emoji}</span>
-                <span>{b.label}</span>
-              </button>
-            ))}
+          <div className="tg-card-skill-header">
+            <h2 className="tg-section-title" style={{ margin: 0, flex: 1, minWidth: 0 }}>
+              ‘{t(ARTWORKS.find((a) => a.id === artwork)?.tKey ?? '')}’ {t('skills.basic')}
+            </h2>
+            <button
+              type="button"
+              className="tg-card-skill-gear"
+              onClick={() => setSettingsOpen(true)}
+              title={t('settings.title')}
+              aria-label={t('settings.title')}
+            >
+              <Image src="/thinkgen/icon-settings.svg" alt="" width={30} height={30} />
+            </button>
+            <button
+              type="button"
+              className={`tg-card-skill-toggle ${distanceReactivity ? 'is-on' : ''}`}
+              onClick={() => {
+                if (!isConnected) {
+                  setStatusMessage(t('panel.connectFirst'));
+                  return;
+                }
+                setDistanceReactivity((v) => !v);
+              }}
+              disabled={!isConnected}
+              title={`${t('settings.distanceReact')} ${distanceReactivity ? 'ON' : 'OFF'}`}
+              aria-label={t('settings.distanceReact')}
+              aria-pressed={distanceReactivity}
+            >
+              👀
+            </button>
+          </div>
+          <div className="tg-card-skill-box">
+            <div className="tg-card-key-list">
+              {[
+                { id: 'close', letter: 'C', en: 'Close', ko: t('card.close'), onClick: () => void onBasicCmd('5'), disabled: !isConnected },
+                { id: 'open',  letter: 'O', en: 'Open',  ko: t('card.open'),  onClick: () => void onBasicCmd('%'), disabled: !isConnected },
+                { id: 'play',  letter: 'P', en: 'Play',  ko: t('card.play'),  onClick: onPlayCardSkill,           disabled: !isConnected || isExecuting },
+              ].map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  className="tg-card-key-btn"
+                  onClick={b.onClick}
+                  disabled={b.disabled}
+                >
+                  <span className="tg-card-key-badge">{b.letter}</span>
+                  <span className="tg-card-key-label">
+                    <span className="tg-card-key-en">{b.en}</span>
+                    <span className="tg-card-key-divider" />
+                    <span className="tg-card-key-ko">{b.ko}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+            <Image
+              className="tg-card-skill-thumb"
+              src={ARTWORKS.find((a) => a.id === artwork)?.cardSmall ?? '/thinkgen/card-frame-crocodile.png'}
+              alt={t(ARTWORKS.find((a) => a.id === artwork)?.tKey ?? '')}
+              width={220}
+              height={310}
+              onClick={() => setArtwork(null)}
+              title={t('landing.back')}
+            />
           </div>
           {/* 작은 advanced 진입 링크 */}
           <Link href="/play" className="tg-advanced-link">
@@ -681,269 +873,120 @@ export default function SimplePlayPage() {
         </section>
       </aside>
 
-      {/* ════════════ 우측 메인 ════════════ */}
-      <main className="tg-main">
-        {/* ─── 상단 ─── */}
-        <header className="tg-topbar">
-          {/* 프로젝트 */}
-          <div>
-            <div className="tg-label">{t('project.label')}</div>
-            <div className="tg-project-select-wrap" ref={projectMenuRef}>
-              <button
-                type="button"
-                className="tg-project-select"
-                aria-haspopup="listbox"
-                aria-expanded={projectOpen}
-                onClick={() => setProjectOpen((v) => !v)}
-              >
-                {t(ARTWORKS.find((a) => a.id === artwork)?.tKey ?? 'artwork.crocodile')}
-              </button>
-              {projectOpen && (
-                <div className="tg-project-menu" role="listbox">
-                  {ARTWORKS.map((a) => (
-                    <button
-                      key={a.id}
-                      type="button"
-                      role="option"
-                      aria-selected={artwork === a.id}
-                      className={`tg-project-option ${artwork === a.id ? 'is-selected' : ''}`}
-                      onClick={() => {
-                        setArtwork(a.id);
-                        setProjectOpen(false);
-                      }}
-                    >
-                      <span className="tg-project-emoji">{a.emoji}</span>
-                      <span>{t(a.tKey)}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <select
-                className="tg-project-native"
-                value={artwork}
-                onChange={(e) => setArtwork(e.target.value as NonNullable<PromptContext['artwork']>)}
-                aria-label={t('project.label')}
-                tabIndex={-1}
-              >
-                {ARTWORKS.map((a) => (
-                  <option key={a.id} value={a.id} style={{ background: '#fff', color: C.textDark }}>
-                    {t(a.tKey)}
-                  </option>
-                ))}
-              </select>
+      {/* ════════════ 우측 메인 — 상단바 제거, 중앙 스테이지 + 하단 입력바 ════════════ */}
+      <main className="tg-main-clean">
+        {/* ─── 중앙 스테이지 — 자동차=조이스틱, 카메라ON=제스처, 그 외=작품 카드 큰 표시 ─── */}
+        <div className="tg-stage">
+          {showCamera ? (
+            <div className="tg-stage-camera">
+              <CameraPanel
+                onGesture={onCameraGesture}
+                videoWidth={640}
+                videoHeight={480}
+                colors={{
+                  primary: C.purple,
+                  primaryDark: C.textDark,
+                  primaryLight: C.pink,
+                  border: C.textDark,
+                  accent: C.yellow,
+                  textMuted: C.textMuted,
+                }}
+              />
             </div>
-          </div>
-
-          <div className="tg-utility-row" aria-label="보조 도구">
-            <button
-              className={`tg-icon-btn ${showCamera ? 'is-active' : ''}`}
-              onClick={() => setShowCamera((v) => !v)}
-              title={t('tool.gesture')}
-            >
-              🖐
-            </button>
-            {LOCALES.map((l) => (
-              <button
-                key={l.code}
-                className={`tg-locale-btn ${locale === l.code ? 'is-active' : ''}`}
-                onClick={() => setLocale(l.code)}
-                title={l.label}
-              >
-                {l.emoji}
-              </button>
-            ))}
-          </div>
-
-          {/* 컨트롤 보드 */}
-          <div className="tg-control">
-            <div className="tg-label">{t('control.label')}</div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <button
-                className={`tg-connect-btn ${isConnected ? '' : 'is-off'}`}
-                onClick={() => void onToggleConnect()}
-                disabled={board.status === 'requesting' || board.status === 'opening'}
-              >
-                <span>{isConnected ? t('control.on') :
-                       board.status === 'requesting' ? t('connect.requesting') :
-                       board.status === 'opening' ? t('connect.opening') :
-                       t('control.off')}</span>
-                <span className="tg-connect-dot" />
-              </button>
-              {/* 📶 BLE 무선 연결 — 펌웨어 v1.4+ 필요. 연결 끊김 시에만 노출. */}
-              {!isConnected && board.status !== 'requesting' && board.status !== 'opening' && (
-                <button
-                  onClick={() => void board.connectBle()}
-                  title={t('control.bleHint')}
-                  aria-label="Bluetooth"
-                  style={{
-                    fontFamily: 'inherit', cursor: 'pointer',
-                    width: 38, height: 38, borderRadius: '50%',
-                    background: '#fff', color: C.textDark,
-                    border: `3px solid ${C.textDark}`,
-                    fontSize: 18, fontWeight: 900,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    padding: 0,
-                  }}
-                >📶</button>
-              )}
+          ) : artwork === 'car_4wd' ? (
+            <div className="tg-stage-joystick">
+              <div className="tg-stage-joystick-label">🕹 {t('tool.directControl')}</div>
+              <Joystick
+                onMove={onJoystickMove}
+                disabled={!isConnected}
+                size={360}
+                colors={{
+                  primary: C.purple,
+                  primaryLight: C.pink,
+                  border: C.textDark,
+                  textMuted: C.textMuted,
+                }}
+              />
+              <div className="tg-stage-joystick-hint">{t('tool.arrowKeysHint')}</div>
             </div>
-          </div>
-        </header>
-
-        {/* 🚗 자동차 작품 시 조이스틱 자동 노출 (입력 박스 위) */}
-        {artwork === 'car_4wd' && (
-          <div className="tg-floating-panel">
-            <div style={{ flex: '0 0 auto' }}>
-              <div style={{ fontSize: 22, fontWeight: 900, color: C.purple, marginBottom: 4 }}>
-                🕹 직접 조종
-              </div>
-              <div style={{ fontSize: 15, color: C.textMuted, lineHeight: 1.4 }}>
-                화살표 키도 OK
-              </div>
-            </div>
-            <Joystick
-              onMove={onJoystickMove}
-              disabled={!isConnected}
-              colors={{
-                primary: C.purple,
-                primaryLight: C.pink,
-                border: C.textDark,
-                textMuted: C.textMuted,
-              }}
+          ) : (
+            <Image
+              className="tg-stage-empty"
+              src={ARTWORKS.find((a) => a.id === artwork)?.card ?? '/thinkgen/card-frame-crocodile.png'}
+              alt=""
+              width={520}
+              height={760}
+              priority
             />
-          </div>
-        )}
-
-        {/* 🖐 카메라 제스처 (토글 ON 시) */}
-        {showCamera && (
-          <div className="tg-floating-panel" style={{ padding: 12 }}>
-            <CameraPanel
-              onGesture={onCameraGesture}
-              colors={{
-                primary: C.purple,
-                primaryDark: C.textDark,
-                primaryLight: C.pink,
-                border: C.textDark,
-                accent: C.yellow,
-                textMuted: C.textMuted,
-              }}
-            />
-          </div>
-        )}
-
-        {/* ─── 가운데 입력 박스 (마이크 버튼 우측 하단 통합) ─── */}
-        <div className="tg-prompt-card">
-          <textarea
-            ref={textareaRef}
-            className="tg-prompt-input"
-            autoFocus
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={t('input.placeholder')}
-            onKeyDown={(e) => {
-              const isComp = (e.nativeEvent as KeyboardEvent & { isComposing?: boolean }).isComposing;
-              if (e.key === 'Enter' && !e.shiftKey && !isComp && input.trim().length > 0 && !isGenerating && !isExecuting) {
-                e.preventDefault();
-                void sendPrompt(input);
-              }
-            }}
-            disabled={isGenerating || isExecuting}
-          />
-          {(isGenerating || isExecuting) && (
-            <div className="tg-state-line">
-              {isGenerating ? `💭 ${t('send.thinking')}` : '▶ ...'}
-            </div>
           )}
-          {/* 마이크 버튼 — 입력 박스 우측 하단 */}
-          <button
-            className={`tg-mic-btn ${listening ? 'is-listening' : ''}`}
-            onClick={onMicToggle}
-            disabled={isGenerating || isExecuting}
-            title={listening ? t('mic.listening') : t('mic.start')}
-            style={{ animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none' }}
-          >
-            🎤
-          </button>
         </div>
 
-        {/* ─── 하단 — 캐릭터 + 메시지 + 표정 도구 (화면 맨 아래 고정) ─── */}
-        <div className="tg-character-bar">
-          {/* 캐릭터 */}
-          <Image
-            className="tg-character-img"
-            src="/fdland/main_ill.png"
-            alt="ThinkGen 캐릭터"
-            width={138}
-            height={138}
-            priority
-          />
-
-          {/* 메시지 */}
-          <div className="tg-character-message">
-            {micStatus || statusMessage || t('character.greeting')}
+        {/* ─── 하단 — 해파리 + 입력/응답 통합 박스 (해파리 박스 안) + 카메라/마이크 ─── */}
+        <div className="tg-prompt-row">
+          <div className="tg-prompt-card tg-prompt-card-with-jelly">
+            <Image
+              className="tg-prompt-jelly-inside"
+              src="/thinkgen/space-jelly.png"
+              alt="ThinkGen 캐릭터"
+              width={88}
+              height={120}
+              style={{ width: 88, height: 'auto' }}
+              priority
+            />
+            <textarea
+              ref={textareaRef}
+              className="tg-prompt-input"
+              autoFocus
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={
+                micStatus || statusMessage || (
+                  isGenerating ? `💭 ${t('send.thinking')}` :
+                  isExecuting ? '▶ ...' :
+                  t('input.placeholder')
+                )
+              }
+              onKeyDown={(e) => {
+                const isComp = (e.nativeEvent as KeyboardEvent & { isComposing?: boolean }).isComposing;
+                if (e.key === 'Enter' && !e.shiftKey && !isComp && input.trim().length > 0 && !isGenerating && !isExecuting) {
+                  e.preventDefault();
+                  void sendPrompt(input);
+                }
+              }}
+              disabled={isGenerating || isExecuting}
+            />
+            <button
+              type="button"
+              className="tg-prompt-send"
+              onClick={() => void sendPrompt(input)}
+              disabled={isGenerating || isExecuting || input.trim().length === 0}
+              title={t('send.button')}
+              aria-label={t('send.button')}
+            >
+              ▶
+            </button>
           </div>
 
-          {/* 우측 하단 — 표정 도구 (라벨 + 상태 포함, 직관적) */}
-          <div className="tg-bottom-icons" aria-label="작품 도구">
-            {/* 입 아이콘 — 설정 열기 */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-              <button
-                className="tg-bottom-icon-btn"
-                onClick={() => setSettingsOpen(true)}
-                title={t('settings.title')}
-              >
-                <Image
-                  className="tg-mouth-img"
-                  src="/thinkgen/mouth-icon.png"
-                  alt={t('panel.settings')}
-                  width={112}
-                  height={82}
-                />
-              </button>
-              <span style={{ fontSize: 12, fontWeight: 800, color: C.textDark, letterSpacing: 0.3 }}>
-                {t('panel.settings')}
-              </span>
-            </div>
-
-            {/* 눈 아이콘 — 거리 반응 토글 + cm + ON/OFF */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-              <button
-                className={`tg-bottom-icon-btn ${distanceReactivity ? 'is-active' : ''}`}
-                onClick={() => {
-                  if (isConnected) setDistanceReactivity((v) => !v);
-                }}
-                aria-disabled={!isConnected}
-                title={
-                  !isConnected ? t('panel.boardOff') :
-                  distanceReactivity ? `${t('settings.distanceReact')} ON` :
-                  `${t('settings.distanceReact')} OFF`
-                }
-                style={{ opacity: isConnected ? 1 : 0.55 }}
-              >
-                <Image
-                  className="tg-eyes-img"
-                  src="/thinkgen/eyes-icon.png"
-                  alt={t('panel.distance')}
-                  width={120}
-                  height={104}
-                />
-              </button>
-              <span style={{
-                fontSize: 12, fontWeight: 800, color: C.textDark,
-                display: 'flex', alignItems: 'center', gap: 4,
-              }}>
-                <span>{isConnected ? `${board.lastDistanceCm ?? '—'} ${t('distance.label')}` : '—'}</span>
-                <span style={{
-                  fontSize: 10, fontWeight: 900, letterSpacing: 0.5,
-                  padding: '1px 6px', borderRadius: 8,
-                  background: distanceReactivity ? C.purple : '#fff',
-                  color: distanceReactivity ? '#fff' : C.textMuted,
-                  border: `1.5px solid ${C.textDark}`,
-                }}>
-                  {distanceReactivity ? 'ON' : 'OFF'}
-                </span>
-              </span>
-            </div>
+          <div className="tg-prompt-row-icons" aria-label="보조 도구">
+            <button
+              type="button"
+              className={`tg-action-btn is-camera ${showCamera ? 'is-active' : ''}`}
+              onClick={() => setShowCamera((v) => !v)}
+              title={t('tool.gesture')}
+              aria-pressed={showCamera}
+            >
+              <Image src="/thinkgen/icon-camera.svg" alt="" width={32} height={32} />
+            </button>
+            <button
+              type="button"
+              className={`tg-action-btn ${listening ? 'is-active' : ''}`}
+              onClick={onMicToggle}
+              disabled={isGenerating || isExecuting}
+              title={listening ? t('mic.listening') : t('mic.start')}
+              style={{ animation: listening ? 'pulse 1.2s ease-in-out infinite' : 'none' }}
+            >
+              <Image src="/thinkgen/icon-mic.svg" alt="" width={32} height={32} />
+            </button>
           </div>
         </div>
 
@@ -988,6 +1031,35 @@ export default function SimplePlayPage() {
                   width: 36, height: 36, fontSize: 16, fontWeight: 900, color: C.textDark,
                 }}
               >✕</button>
+            </div>
+
+            {/* 언어 선택 — 상단바에서 옮겨옴 */}
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 8, color: C.textDark }}>
+                🌐 {t('settings.locale') ?? '언어 / Language'}
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {LOCALES.map((l) => (
+                  <button
+                    key={l.code}
+                    type="button"
+                    onClick={() => setLocale(l.code)}
+                    style={{
+                      fontFamily: 'inherit', cursor: 'pointer',
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '8px 14px',
+                      background: locale === l.code ? C.purple : '#fff',
+                      color: locale === l.code ? '#fff' : C.textDark,
+                      border: `2.5px solid ${C.textDark}`,
+                      borderRadius: 999,
+                      fontSize: 14, fontWeight: 800,
+                    }}
+                  >
+                    <span style={{ fontSize: 18 }}>{l.emoji}</span>
+                    <span>{l.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* 거리 반응 모드 */}
@@ -1201,6 +1273,86 @@ export default function SimplePlayPage() {
                 );
               })()}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📡 USB / BLE 연결 선택 모달 */}
+      {connectModalOpen && (
+        <div
+          onClick={() => setConnectModalOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
+            zIndex: 110, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: 20,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: C.mainBg, border: `4px solid ${C.textDark}`, borderRadius: 24,
+              padding: 28, maxWidth: 480, width: '100%',
+              boxShadow: `4px 4px 0 ${C.textDark}`,
+              display: 'flex', flexDirection: 'column', gap: 18,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 900, color: C.textDark }}>
+                📡 {t('connect.choose.title')}
+              </h2>
+              <button
+                onClick={() => setConnectModalOpen(false)}
+                style={{
+                  fontFamily: 'inherit', cursor: 'pointer',
+                  background: '#fff', border: `2px solid ${C.textDark}`, borderRadius: '50%',
+                  width: 36, height: 36, fontSize: 16, fontWeight: 900, color: C.textDark,
+                }}
+              >✕</button>
+            </div>
+
+            {[
+              {
+                id: 'usb',
+                emoji: '🔌',
+                title: t('connect.choose.usb'),
+                desc: t('connect.choose.usb.desc'),
+                onClick: async () => { setConnectModalOpen(false); await board.connect(); },
+              },
+              {
+                id: 'ble',
+                emoji: '📶',
+                title: t('connect.choose.ble'),
+                desc: t('connect.choose.ble.desc'),
+                onClick: async () => { setConnectModalOpen(false); await board.connectBle(); },
+              },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => void opt.onClick()}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 16,
+                  padding: '16px 20px',
+                  background: '#fff', border: `3px solid ${C.textDark}`, borderRadius: 16,
+                  cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+                  boxShadow: `3px 4px 0 ${C.textDark}`,
+                  transition: 'transform 140ms ease, box-shadow 140ms ease',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.transform = 'translate(-2px,-2px)';
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow = `5px 6px 0 ${C.textDark}`;
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLButtonElement).style.transform = '';
+                  (e.currentTarget as HTMLButtonElement).style.boxShadow = `3px 4px 0 ${C.textDark}`;
+                }}
+              >
+                <span style={{ fontSize: 36, lineHeight: 1 }}>{opt.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 18, fontWeight: 900, color: C.textDark }}>{opt.title}</div>
+                  <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>{opt.desc}</div>
+                </div>
+              </button>
+            ))}
           </div>
         </div>
       )}

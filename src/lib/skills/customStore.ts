@@ -52,6 +52,7 @@ interface CustomSkillsState {
   fetch: () => Promise<void>;
   add: (s: Omit<CustomSkill, 'id' | 'createdAt'>) => Promise<CustomSkill | null>;
   remove: (id: string) => Promise<void>;
+  rename: (id: string, label: string) => Promise<void>;
   toggleSimpleHidden: (id: string) => Promise<void>;
   toggleBuiltinHidden: (builtinId: string) => Promise<void>;
   clear: () => void;
@@ -146,6 +147,26 @@ export const useCustomSkillsStore = create<CustomSkillsState>()((set, get) => ({
       if (!res.ok) throw new Error(`remove ${res.status}`);
     } catch (e) {
       // 롤백
+      set({ skills: prev, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  rename: async (id, label) => {
+    const trimmed = label.trim().slice(0, 16);
+    if (trimmed.length === 0) return;
+    const prev = get().skills;
+    // 낙관적 업데이트
+    set((state) => ({
+      skills: state.skills.map((s) => s.id === id ? { ...s, label: trimmed } : s),
+    }));
+    try {
+      const res = await fetch(`/api/skills/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: trimmed }),
+      });
+      if (!res.ok) throw new Error(`rename ${res.status}`);
+    } catch (e) {
       set({ skills: prev, error: e instanceof Error ? e.message : String(e) });
     }
   },

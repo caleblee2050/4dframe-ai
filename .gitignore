@@ -36,6 +36,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local tooling artifacts (Claude Code, Playwright MCP)
+.claude/
+.playwright-mcp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

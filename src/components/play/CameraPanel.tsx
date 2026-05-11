@@ -15,11 +15,16 @@ type Gesture =
 interface Props {
   onGesture: (g: Gesture) => void;
   colors: { primary: string; primaryDark: string; primaryLight: string; border: string; accent: string; textMuted: string };
+  // 비디오 표시 크기 — 기본 320×240. /play/simple 의 큰 스테이지에서는 더 크게.
+  videoWidth?: number;
+  videoHeight?: number;
+  // 레이아웃 방향 — 'row'(가로 ▶ 텍스트 우측, 기본) | 'column'(세로 ▶ 텍스트 아래, 스테이지 채움용)
+  layout?: 'row' | 'column';
 }
 
 type Mode = 'hand' | 'head';
 
-export function CameraPanel({ onGesture, colors }: Props) {
+export function CameraPanel({ onGesture, colors, videoWidth = 320, videoHeight = 240, layout = 'row' }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [mode, setMode] = useState<Mode>('hand');
@@ -142,13 +147,17 @@ export function CameraPanel({ onGesture, colors }: Props) {
   return (
     <section style={{
       background: '#fff', border: `1px solid ${colors.border}`, borderRadius: 12,
-      padding: 12, display: 'flex', gap: 12, alignItems: 'center',
+      padding: 12,
+      display: 'flex',
+      flexDirection: layout === 'column' ? 'column' : 'row',
+      gap: 12,
+      alignItems: layout === 'column' ? 'stretch' : 'center',
     }}>
-      <div style={{ position: 'relative', width: 320, height: 240, background: '#000', borderRadius: 8, overflow: 'hidden' }}>
+      <div style={{ position: 'relative', width: videoWidth, height: videoHeight, maxWidth: '100%', background: '#000', borderRadius: 8, overflow: 'hidden', alignSelf: 'center' }}>
         <video ref={videoRef} muted playsInline
           style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
         <canvas ref={canvasRef} width={320} height={240}
-          style={{ position: 'absolute', inset: 0, transform: 'scaleX(-1)', pointerEvents: 'none' }} />
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: 'scaleX(-1)', pointerEvents: 'none' }} />
       </div>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: colors.primaryDark }}>📷 카메라 친구</div>
