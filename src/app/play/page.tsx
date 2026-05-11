@@ -792,7 +792,8 @@ export default function PlayPage() {
 
     // ★ V level = ceil(mag * 9). Joystick 이 mag 를 재정규화 (데드존 직후=0, 끝=1) 해서
     //   아주 조금 밀면 V1, 끝까지 = V9. 9등분 균등.
-    const speedLevel = Math.max(1, Math.min(9, Math.ceil(mag * 9)));
+    // epsilon 으로 부동소수점 오차 (mag=2/9 → ceil(2.0000001)=3) 차단.
+    const speedLevel = Math.max(1, Math.min(9, Math.ceil(mag * 9 - 1e-6)));
     const lDir = left > 0.10 ? 1 : left < -0.10 ? -1 : 0;
     const rDir = right > 0.10 ? 1 : right < -0.10 ? -1 : 0;
     // 한 쪽이 정지면 그 쪽 PWM 0, 도는 쪽만 speedLevel.

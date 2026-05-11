@@ -49,7 +49,9 @@ export const MOTORS: Record<MotorId, MotorConfig> = {
   M3: {
     id: 'M3', labelKr: '앞오른쪽',
     forwardByte: '3', reverseByte: '#', dirToggleSeq: 'F3',
-    defaultDir: -1, typicalStartPwmLevel: 3,  // 펌웨어가 IN1/IN2 거울 반전 → 기본 -1
+    // 회로도 (5/11 PM 입수) 기준 정방향 1. 펌웨어 부팅 default 가 -1 (v1.0 라우팅 잔재) 라
+    // webSerial 의 syncMotorDirsToFirmware 가 BOOT 시 F3 토글 1회 송신해 펌웨어를 1 로 맞춤.
+    defaultDir: 1, typicalStartPwmLevel: 3,
     pwmPin: 9, pwmIndex: 2,
   },
   M4: {

@@ -53,8 +53,8 @@ export function Joystick({ onDirection, onMove, disabled, colors }: Props) {
     if (dist > DEAD_ZONE) {
       mag = Math.min(1, (dist - DEAD_ZONE) / ACTIVE_SPAN);
     }
-    // 9등분 균등 — ceil 로 mag=0+ε → V1, mag=1 → V9 보장
-    const level = mag === 0 ? 0 : Math.max(1, Math.min(LEVELS, Math.ceil(mag * LEVELS)));
+    // 9등분 균등 — ceil 로 mag=0+ε → V1, mag=1 → V9 보장. epsilon 으로 부동소수점 오차 차단.
+    const level = mag === 0 ? 0 : Math.max(1, Math.min(LEVELS, Math.ceil(mag * LEVELS - 1e-6)));
     setCurrentLevel(level);
 
     // 정교 모드 콜백 — 매 프레임 호출

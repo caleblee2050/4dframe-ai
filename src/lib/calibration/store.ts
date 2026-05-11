@@ -87,7 +87,8 @@ export const useCalibrationStore = create<CalibrationState>()(
       storage: createJSONStorage(() => localStorage),
       // v2 (5/9): v1.3.2 진단 흔적 폐기.
       // v3 (5/11 PM): has9VBattery 필드 추가 — 옛 상태에 default true 채움.
-      version: 3,
+      // v4 (5/11 PM 후속): 회로도 기준으로 M3 default 방향 -1 → 1. 옛 상태도 -1 이면 1 로 정정.
+      version: 4,
       migrate: (persistedState, version) => {
         if (version < 2) {
           return { current: initial } as { current: BoardCalibration };
@@ -99,6 +100,19 @@ export const useCalibrationStore = create<CalibrationState>()(
               ...initial,
               ...s.current,
               has9VBattery: s.current?.has9VBattery ?? true,
+            },
+          } as { current: BoardCalibration };
+        }
+        if (version < 4) {
+          const s = persistedState as { current: BoardCalibration };
+          // M3 가 -1 (v3 default) 이면 회로도 기준 1 로 정정
+          return {
+            current: {
+              ...s.current,
+              dirOverride: {
+                ...s.current.dirOverride,
+                M3: s.current.dirOverride.M3 === -1 ? 1 : s.current.dirOverride.M3,
+              },
             },
           } as { current: BoardCalibration };
         }

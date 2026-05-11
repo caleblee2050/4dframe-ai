@@ -105,7 +105,7 @@ export default function SimplePlayPage() {
     const norm = Math.max(Math.abs(left), Math.abs(right), 1);
     left /= norm; right /= norm;
     const v13 = isV13Plus(b.lastBoot?.fw);
-    const speedLevel = Math.max(1, Math.min(9, Math.ceil(mag * 9)));
+    const speedLevel = Math.max(1, Math.min(9, Math.ceil(mag * 9 - 1e-6)));
     const lDir = left > 0.10 ? 1 : left < -0.10 ? -1 : 0;
     const rDir = right > 0.10 ? 1 : right < -0.10 ? -1 : 0;
     const lLevel = lDir !== 0 ? speedLevel : 0;
@@ -303,6 +303,8 @@ export default function SimplePlayPage() {
       },
     });
     setIsExecuting(false);
+    // 동작 끝나면 다음 명령 입력하기 쉽게 textarea focus 복원
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }, [isExecuting, board.status, customSkillsStore, artwork, t]);
 
   // === Send to AI ===
@@ -358,6 +360,8 @@ export default function SimplePlayPage() {
       setStatusMessage(`❌ ${(e as Error).message}`);
     } finally {
       setIsGenerating(false);
+      // AI 응답 직후 textarea 포커스 복원 — 학생이 곧바로 다음 입력 시작 가능.
+      requestAnimationFrame(() => textareaRef.current?.focus());
     }
   }, [isGenerating, history, artwork, cal, board.lastDistanceCm, executeProgram]);
 

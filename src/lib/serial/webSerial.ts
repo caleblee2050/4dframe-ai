@@ -52,6 +52,34 @@ let _bleBuffer = '';   // notification 데이터 누적 (개행 단위 split)
 
 const encoder = new TextEncoder();
 
+// 펌웨어 부팅 후 calibrationStore.dirOverride 를 펌웨어 측 M{n}_DIR 과 일치시킴.
+// 펌웨어는 부팅 시 M3_DIR=-1 (v1.0 라우팅 잔재), 다른 모터는 1. calibrationStore 의 dirOverride 가
+// 회로도 기준 (M1~M4 모두 정방향 1) 이면, M3 만 F3 토글 송신해 펌웨어를 1 로 맞춤.
+// 학생이 캘리브레이션으로 바꿔놓은 값도 매 부팅마다 자동 적용.
+async function syncMotorDirsToFirmware() {
+  try {
+    const { useCalibrationStore } = await import('@/lib/calibration/store');
+    const { MOTORS } = await import('@/lib/commands/commands');
+    const cal = useCalibrationStore.getState();
+    const motors = ['M1', 'M2', 'M3', 'M4'] as const;
+    for (const m of motors) {
+      const stored = cal.current.dirOverride[m];
+      // 펌웨어 부팅 default: M3=-1, 나머지=1.
+      const fwBootDefault: 1 | -1 = m === 'M3' ? -1 : 1;
+      if (stored !== fwBootDefault) {
+        // 부팅 default 와 다르면 F{n} 토글 1회 송신.
+        const n = m.slice(1);
+        const send = useBoardStore.getState().send;
+        await send(`F${n}`).catch(() => {});
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    void MOTORS;   // import keep
+  } catch {
+    // sync 실패는 무시 — 사용자가 직접 캘리브레이션으로 보정 가능
+  }
+}
+
 export const useBoardStore = create<BoardState & BoardActions>()((set, get) => ({
   status: 'idle',
   errorMessage: null,
@@ -382,6 +410,11 @@ function handleLine(line: string) {
         const fw = fwRaw.startsWith('FW') ? fwRaw.slice(2) : fwRaw;
         next.lastBoot = { boardId: parts[1], fw };
       }
+      // 펌웨어 부팅 직후 모터 방향 sync.
+      // 펌웨어 default: M1=1, M2=1, M3=-1 (v1.0 라우팅 잔재), M4=1.
+      // 회로도 (5/11 PM 입수) 기준 정방향은 4개 모두 1. M3 만 보정 필요.
+      // calibrationStore dirOverride 와 펌웨어 default 가 다른 모터마다 F{n} 토글 송신.
+      setTimeout(() => { void syncMotorDirsToFirmware(); }, 400);
     } else if (line.startsWith('DIST:')) {
       const cm = Number(line.slice(5));
       if (Number.isFinite(cm) && cm > 0) next.lastDistanceCm = cm;
