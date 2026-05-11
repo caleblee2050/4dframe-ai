@@ -1,6 +1,6 @@
 # 4DFrame AI — Walkthrough
 
-> 마지막 업데이트: 2026-05-11 (D-day + 1)
+> 마지막 업데이트: 2026-05-11 (1차 시연 후 ~ 정식 시연 5/13 전)
 > **다음 세션 시작 시 이 문서만 읽고 즉시 작업 진입 가능**
 > 페이지 안내: [docs/PAGES.md](docs/PAGES.md)
 > 제품 비전: [docs/VISION.md](docs/VISION.md)
@@ -12,7 +12,7 @@
 ```bash
 cd /Users/caleb/dev/4dframe-ai
 git status
-git log --oneline -10
+git log --oneline -15
 vercel env pull .env.local       # OIDC 토큰 12시간 만료 — 항상 첫 작업
 npm run dev                       # 로컬 dev (Mac)
 ```
@@ -27,7 +27,121 @@ npm run dev                       # 로컬 dev (Mac)
 
 ---
 
-## 1. 5/10 (오후) ~ 5/11 큰 줄기 — 단순 모드 + 다국어 + AI 작곡
+## ⏳ 다음 세션 즉시 작업 (Turso DB 완성)
+
+사용자 turso 로그인 완료 (`caleblee2050`). 자동 진행:
+
+```bash
+# 1. DB 생성 (도쿄 리전)
+turso db create 4dframe-skills --location nrt
+
+# 2. URL/Token 추출
+TURSO_DATABASE_URL=$(turso db show 4dframe-skills --url)
+TURSO_AUTH_TOKEN=$(turso db tokens create 4dframe-skills)
+
+# 3. Vercel env 등록 (production + preview + development)
+echo "$TURSO_DATABASE_URL" | vercel env add TURSO_DATABASE_URL production
+echo "$TURSO_AUTH_TOKEN"   | vercel env add TURSO_AUTH_TOKEN  production
+# (preview, development 도 동일)
+
+# 4. .env.local 갱신
+vercel env pull .env.local
+
+# 5. Schema 적용
+turso db shell 4dframe-skills < scripts/turso-schema.sql
+
+# 6. 작동 검증
+curl -s http://localhost:3000/api/skills | jq
+curl -s -X POST http://localhost:3000/api/skills -H "Content-Type: application/json" \
+  -d '{"artwork":"crocodile","label":"테스트","emoji":"🧪","program":{"schema_version":1,"steps":[]}}'
+
+# 7. 배포
+vercel --prod
+```
+
+검증 후 https://4dframe-ai.vercel.app/play/simple 에서 customSkill 저장/조회 둘 다 PC 무관 공유 확인.
+
+---
+
+## 1. 5/11 (PM) 큰 줄기 — BLE 진단 확정 + 자연어 스킬 워크플로우 + Turso 인프라
+
+### A. 펌웨어 v1.3.6 — BLE 회로 미연결 확정
+- v1.3.5 의 진단 강화 (5 baud → 9 baud + AT 형식 2개 + wait 400ms → 1000ms + 누적 byte 진단).
+- 검증 결과: `BLE:noresponse,bytes=0` — 9 baud × 2 AT 변형 = **18회 시도 전부 0 byte**.
+- echo 도 안 옴 → **J6 슬롯 ↔ ATmega328 hardware UART (D0/D1) 회로 자체 단선** 확정.
+- 펌웨어 측 해결 불가능. 결론: **회로도 입수** (ThinkGen Inc 에 요청 진행) 또는 **멀티미터 추적** 후 SoftwareSerial 펌웨어 v1.4 필요.
+- D-day (5/13 시연) 전까지 USB 모드로 안전 시연.
+
+### B. 9V + USB 동시 연결 검증
+- **운행 중**: 둘 다 연결 OK. 모터/서보 = 9V, 데이터 통신 = USB. 정상 작동.
+- **플래싱 시**: 9V 분리 필요 (DTR reset window 영향, Arduino Nano 클론 흔한 증상).
+- 5/13 시연 권장 구성: `보드 + 9V 배터리 (DC 잭) + USB 케이블 → 노트북`.
+
+### C. 자연어 스킬 저장 워크플로우 — `save_skill` DSL
+- 새 step: `{ do:'save_skill', label, emoji }`.
+- 학생 흐름: "악어 잡아먹기에 죠스 음악 넣어줘" → AI program 생성+실행 → 마지막 say "마음에 들면 '저장해줘' 라고 해봐!" → 학생 "저장해줘" → AI 가 `save_skill` 만 응답 → 클라이언트가 **lastProgramRef** (직전 실행 program) 을 customSkill 로 저장.
+- systemPrompt 에 워크플로우 가이드 + 예시 추가.
+- simple + advanced 페이지 모두 `save_skill` 이벤트 처리.
+
+### D. 쉬운 모드 3개 슬롯 노출/숨김 관리
+- `CustomSkill.simpleHidden?: boolean` 필드 추가.
+- `customStore.toggleSimpleHidden(id)` action.
+- 설정 모달에 "💖 내 스킬 관리" 섹션 — 작품별 list + ⭐/🙈/🗑.
+- simple page customs = `filter(!simpleHidden).slice(0, 3)`.
+- 한/영/몽 라벨 모두 번역.
+
+### E. AI 즉석 작곡 — `tune: 'custom'`
+- DSL 확장: `PlayTuneStep.custom?: { notes: [{pitch, beats}], timbre? }`.
+- pitch 'C3'~'A5' / 'rest' / beats 0.1~8 / timbre square·triangle·sine.
+- melodySynth 의 `pitchToHz` + `customToNotes` + tune='custom' 분기 (timbre 별 음색).
+- `melodyDurationMs(tune, tempo, custom?)` — sync 길이 정확 측정.
+- systemPrompt 의 즉석 작곡 가이드 + 예시 3개 (긴장 sine / 행진 square / 심장박동 sine 반복).
+- 핵심 원칙: 부정확해도 OK — "맞춰 나가는 과정" 자체가 사고력 훈련.
+
+### F. ✈️ 떴다떴다 비행기 + 미지원 노래 fallback
+- `airplane` tune 추가 (Mary Had a Little Lamb 멜로디).
+- 카탈로그 9개: school_bell / twinkle / butterfly / mountain_rabbit / three_bears / airplane / beep_pattern / music_box / jaws / custom.
+- systemPrompt: 카탈로그 외 노래 ("아기상어" 등) → custom 으로 즉석 작곡 또는 비슷한 preset.
+
+### G. 음악-동작 정확 sync (executor 패턴)
+- `viking_school_bell` executor — 학교종 + M1+M3 흔들기 동시 시작/종료.
+- `crocodile_jaws` 신규 — 죠스 음악 80% 까지 입 미세 떨림, 마지막 20% 클라이맥스 입 크게 + crocodile 효과음.
+- `ballerina_musicbox` 다국어 say (intro/outro 사전 키).
+- `SkillExecutor.t(key)` 인터페이스 추가 — executor 내부 i18n.
+
+### H. TTS 다층 fallback + OpenAI 통합
+- **검색 결과 (2026-05-11)**: Vercel AI Gateway 가 TTS 라우팅 미지원 ("Model could not be resolved"). `gemini-3.1-flash-tts-preview` 가 최신, preview 자체 일일 한도 100 (Tier 1 유료여도).
+- 3층 fallback 구조:
+  1. **Gemini 3.1 Flash TTS Preview** (`GOOGLE_GENERATIVE_AI_API_KEY`) — 최선 품질, 100/일.
+  2. **OpenAI tts-1** (`OPENAI_API_KEY`) — 유료 billing 활성. 한도 거의 무한. **사용자 5/11 PM 활성화 + 키 등록 완료** ✅.
+  3. **브라우저 `SpeechSynthesisUtterance`** — 최종 안전망, Mac OS voice.
+- voice 매핑 (Gemini → OpenAI): Kore→nova / Puck→alloy / etc.
+- soundManager.ts: `/api/tts` 실패 시 자동으로 브라우저 TTS fallback.
+- ⚠️ 사용자 공유 OpenAI key 는 채팅/git 기록에 평문 노출 — **회전 권장**.
+
+### I. Turso DB 인프라 (다음 세션 완성)
+- `@libsql/client` 사용. `scripts/turso-schema.sql` (skills 테이블).
+- `/api/skills` GET (?artwork=xxx 필터) / POST (validateProgram + 추가).
+- `/api/skills/[id]` DELETE / PATCH (simpleHidden 토글).
+- **customStore.ts 변환**: zustand persist (localStorage) → server-synced.
+  - fetch / add / remove / toggleSimpleHidden 모두 async + API 호출.
+  - 낙관적 업데이트 + 실패 시 롤백.
+  - simple + advanced 페이지 mount useEffect 에서 fetch.
+- 단일 테넌트 (로그인 v2). 모든 PC 같은 스킬 풀 공유 — **PC 별 스킬 차이 문제 해결**.
+- 사용자 turso 로그인 OK. DB 생성 + env 등록 + schema 적용 = 다음 세션 첫 작업.
+
+### J. 카메라 손 동작 — 악어 단순화
+- artwork === 'crocodile' 시 손 펼침(openness>=0.6) = 입 벌림 (`%`) / 주먹(<=0.3) = 입 다묾 (`5`).
+- 중간 영역 hysteresis. 다른 작품은 기존 손가락 0~5개 매핑 유지.
+
+### K. 도메인 진단 + 보안
+- 5/11 PM 1차 시연 후 OIDC 토큰 만료 → dev server 죽음 → vercel env pull 갱신.
+- OpenAI key 가 채팅 평문 노출 → 사용자에게 회전 권장.
+- turso 의 settings.json 에 저장된 token 만료 → 사용자가 `turso auth login` 재로그인 (5/11 PM 완료).
+
+---
+
+## 2. 5/10 (오후) ~ 5/11 (AM) 큰 줄기 — 단순 모드 + 다국어 + AI 작곡
 
 ### A. 학생용 단순 모드 (/play/simple) 신설
 - 별도 라우트로 분리 — `/play` 는 어른용, `/play/simple` 은 학생용 (디자인 이미지 매칭).
