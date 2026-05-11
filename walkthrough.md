@@ -1,6 +1,6 @@
 # 4DFrame AI — Walkthrough
 
-> 마지막 업데이트: 2026-05-11 (1차 시연 후 ~ 정식 시연 5/13 전)
+> 마지막 업데이트: 2026-05-11 (PM 후속 세션 — Turso 라이브 완료)
 > **다음 세션 시작 시 이 문서만 읽고 즉시 작업 진입 가능**
 > 페이지 안내: [docs/PAGES.md](docs/PAGES.md)
 > 제품 비전: [docs/VISION.md](docs/VISION.md)
@@ -27,39 +27,18 @@ npm run dev                       # 로컬 dev (Mac)
 
 ---
 
-## ⏳ 다음 세션 즉시 작업 (Turso DB 완성)
+## ✅ 5/11 PM 후속 — Turso DB 라이브 완료
 
-사용자 turso 로그인 완료 (`caleblee2050`). 자동 진행:
-
-```bash
-# 1. DB 생성 (도쿄 리전)
-turso db create 4dframe-skills --location nrt
-
-# 2. URL/Token 추출
-TURSO_DATABASE_URL=$(turso db show 4dframe-skills --url)
-TURSO_AUTH_TOKEN=$(turso db tokens create 4dframe-skills)
-
-# 3. Vercel env 등록 (production + preview + development)
-echo "$TURSO_DATABASE_URL" | vercel env add TURSO_DATABASE_URL production
-echo "$TURSO_AUTH_TOKEN"   | vercel env add TURSO_AUTH_TOKEN  production
-# (preview, development 도 동일)
-
-# 4. .env.local 갱신
-vercel env pull .env.local
-
-# 5. Schema 적용
-turso db shell 4dframe-skills < scripts/turso-schema.sql
-
-# 6. 작동 검증
-curl -s http://localhost:3000/api/skills | jq
-curl -s -X POST http://localhost:3000/api/skills -H "Content-Type: application/json" \
-  -d '{"artwork":"crocodile","label":"테스트","emoji":"🧪","program":{"schema_version":1,"steps":[]}}'
-
-# 7. 배포
-vercel --prod
-```
-
-검증 후 https://4dframe-ai.vercel.app/play/simple 에서 customSkill 저장/조회 둘 다 PC 무관 공유 확인.
+- **DB**: `4dframe-skills` (default group, `aws-us-west-2`, `libsql://4dframe-skills-caleblee2050.aws-us-west-2.turso.io`).
+  - 도쿄(`aws-ap-northeast-1`)는 별도 group 필요 — 일단 사용자 다른 18개 DB와 동일 그룹 사용. 트래픽 한국 집중 시 group 이전 검토.
+- **Schema 적용 완료**: `skills` 테이블 + `idx_skills_artwork` / `idx_skills_created_at` 인덱스.
+- **Vercel env**: TURSO_DATABASE_URL / TURSO_AUTH_TOKEN × Production + Preview + Development 전부 등록.
+  - 주의: `vercel env add ... preview --value <v> --yes` CLI 가 v53.3.2 에서도 "all preview branches" 모드 미동작 → **REST API (`POST https://api.vercel.com/v10/projects/:id/env?upsert=true`)** 로 우회. 토큰: `~/Library/Application Support/com.vercel.cli/auth.json`.
+- **로컬 검증**: GET (전체) / GET `?artwork=crocodile` / POST / PATCH (simpleHidden) / DELETE 전부 PASS.
+- **라이브 검증**: https://4dframe-ai.vercel.app/api/skills 동일 PASS — 배포 ID `dpl_5HoyGzMckko2qGhjjZajJ2H7HKZx`.
+- **DB 상태**: 검증 데이터 삭제 후 0 row (clean slate).
+- **Vercel CLI**: v52 → v53.3.2 업그레이드 완료.
+- **TURSO 토큰**: 새로 발급 (caleblee2050). 만료 시 `turso db tokens create 4dframe-skills` 후 env 갱신 + redeploy.
 
 ---
 
