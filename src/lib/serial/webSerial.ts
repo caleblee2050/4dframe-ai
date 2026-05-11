@@ -191,6 +191,15 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
 
       set({ status: 'connected' });
 
+      // ⚠ BLE 연결 직후 모터 폭주 방지:
+      // JDY-23 의 GATT handshake 가 D4 SoftwareSerial RX 라인에 비트 글리치를 유발 →
+      // 펌웨어가 'W' / '1' / '@' 같은 명령 byte 로 잘못 해석 → 모터 갑자기 회전.
+      // 첫 2초간 250ms 간격으로 '0' (stop_all) 송신해 어떤 가짜 명령도 강제 무효화.
+      try { await bleSend('0'); } catch {}
+      for (let i = 1; i <= 8; i++) {
+        setTimeout(() => { void bleSend('0').catch(() => {}); }, i * 250);
+      }
+
       // 진단 명령 자동 발사 (BOOT 못 받았을 때 ID/FW 채우기)
       setTimeout(() => {
         void bleSend('?').catch((err) => {
