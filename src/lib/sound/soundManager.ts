@@ -124,6 +124,25 @@ async function fetchAndCacheTts(text: string): Promise<string | null> {
   }
 }
 
+// Gemini TTS 실패 시 브라우저 내장 음성 합성으로 fallback.
+// quota 초과 / 토큰 만료 / 네트워크 오류 모두 cover. 품질 낮지만 무료 + 즉시.
+async function browserSpeak(text: string): Promise<void> {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  return new Promise((resolve) => {
+    const clean = stripAudioTags(text);
+    if (!clean.trim()) { resolve(); return; }
+    const u = new SpeechSynthesisUtterance(clean);
+    const locale = currentLocale();
+    u.lang = locale === 'ko' ? 'ko-KR' : locale === 'mn' ? 'mn-MN' : 'en-US';
+    u.rate = 1.0;
+    u.pitch = 1.1;
+    u.onend = () => resolve();
+    u.onerror = () => resolve();
+    try { window.speechSynthesis.cancel(); window.speechSynthesis.speak(u); }
+    catch { resolve(); }
+  });
+}
+
 export async function speakText(text: string): Promise<void> {
   if (typeof window === 'undefined') return;
   if (useSoundStore.getState().muted) return;
@@ -133,7 +152,11 @@ export async function speakText(text: string): Promise<void> {
 
   try {
     const url = await fetchAndCacheTts(text);
-    if (!url) return;
+    if (!url) {
+      // Gemini 실패 → 브라우저 TTS fallback
+      await browserSpeak(text);
+      return;
+    }
 
     const audio = new Audio(url);
     currentTtsAudio = audio;
