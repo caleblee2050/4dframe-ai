@@ -159,6 +159,14 @@ export interface PlayTuneStep extends BaseStep {
   await_melody?: boolean;
 }
 
+// 스킬 저장 step — 학생이 "저장해줘" 한 직후 AI 가 이 step 만 응답.
+// 클라이언트가 마지막으로 실행한 program 을 학생 친화 이름/이모지로 customSkills 에 저장.
+export interface SaveSkillStep extends BaseStep {
+  do: 'save_skill';
+  label: string;       // 1~16자, 학생이 한 말 또는 동작 본질
+  emoji: string;       // 1글자 이모지
+}
+
 export type Step =
   | SpinStep
   | DriveStep
@@ -171,7 +179,8 @@ export type Step =
   | SayStep
   | CalibrateStep
   | PlaySoundStep
-  | PlayTuneStep;
+  | PlayTuneStep
+  | SaveSkillStep;
 
 // ─────────────────────────────────────────────────────────────
 // 프로그램 (AI가 한 번에 뱉는 단위)
@@ -300,6 +309,12 @@ function validateStep(step: Step, path: string): void {
           throw new DslValidationError(`${path}.custom.timbre`, 'timbre 는 square/triangle/sine');
         }
       }
+      return;
+    case 'save_skill':
+      if (typeof step.label !== 'string' || step.label.length === 0 || step.label.length > 16)
+        throw new DslValidationError(`${path}.label`, 'save_skill.label 은 1~16자');
+      if (typeof step.emoji !== 'string' || step.emoji.length === 0 || step.emoji.length > 4)
+        throw new DslValidationError(`${path}.emoji`, 'save_skill.emoji 는 1글자 이모지');
       return;
     default: {
       const exhaustive: never = step;

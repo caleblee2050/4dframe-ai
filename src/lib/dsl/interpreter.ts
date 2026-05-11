@@ -24,6 +24,7 @@ export type InterpreterEvent =
   | { type: 'calibrate'; reason: CalibrateStep['reason'] }
   | { type: 'play_sound'; sound: PlaySoundStep['sound']; volume: number }
   | { type: 'play_tune'; tune: PlayTuneStep['tune']; tempo: number; await_melody: boolean; custom?: PlayTuneStep['custom'] }
+  | { type: 'save_skill'; label: string; emoji: string }
   | { type: 'step_start'; step: Step; index: number }
   | { type: 'step_end'; step: Step; index: number }
   | { type: 'aborted' }
@@ -122,6 +123,8 @@ async function executeStep(step: Step, ctx: StepCtx, path: string): Promise<void
       return execPlaySound(step, ctx);
     case 'play_tune':
       return execPlayTune(step, ctx);
+    case 'save_skill':
+      return ctx.emit({ type: 'save_skill', label: step.label, emoji: step.emoji });
   }
 }
 

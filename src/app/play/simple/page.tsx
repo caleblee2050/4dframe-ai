@@ -79,6 +79,8 @@ export default function SimplePlayPage() {
   const abortRef = useRef<AbortController | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const projectMenuRef = useRef<HTMLDivElement | null>(null);
+  // 마지막 실행한 program — save_skill step 이 이 program 을 customSkill 로 저장
+  const lastProgramRef = useRef<Program | null>(null);
 
   // === Connected flag (effect deps 용 — Computed 보다 먼저 필요) ===
   const isConnectedEarly = board.status === 'connected';
@@ -226,9 +228,12 @@ export default function SimplePlayPage() {
   const builtIn = skillsForArtwork(artwork);
   // 쉬운 모드 스킬 = 어른이 고급 모드에서 등록/삭제한 customSkills + built-in.
   // customSkills 우선 (어른 의도) → 부족하면 built-in 채움. 최대 3개 슬롯.
+  // simpleHidden=true 인 customSkill 은 노출 X — 설정 모달에서 토글.
   // 고급 모드에서 ✕ 삭제하면 쉬운 모드에서도 즉시 사라짐 (zustand 공유).
-  const customs = customSkillsStore.skills.filter((s) => s.artwork === artwork);
+  const customs = customSkillsStore.skills.filter((s) => s.artwork === artwork && !s.simpleHidden);
   const allSkills: (Skill | CustomSkill)[] = [...customs, ...builtIn].slice(0, 3);
+  // 설정 모달의 "내 스킬 관리" 용 — hidden 포함 전체 list
+  const allCustomsForArtwork = customSkillsStore.skills.filter((s) => s.artwork === artwork);
 
   // === Connect ===
   const onToggleConnect = async () => {
@@ -239,11 +244,17 @@ export default function SimplePlayPage() {
   // === Execute Program ===
   const executeProgram = useCallback(async (prog: Program) => {
     if (isExecuting) return;
-    if (board.status !== 'connected') {
+    // 보드 미연결이어도 save_skill 만 들어있는 program 은 허용 (저장만 하니까)
+    const isSaveOnly = prog.steps.length > 0 && prog.steps.every((s) => s.do === 'save_skill');
+    if (!isSaveOnly && board.status !== 'connected') {
       setStatusMessage(t('panel.connectFirst'));
       return;
     }
     setIsExecuting(true);
+    // save_skill 전용이 아닌 program 은 lastProgramRef 갱신 — 학생 "저장해줘" 시 이 program 저장
+    if (!isSaveOnly) {
+      lastProgramRef.current = prog;
+    }
     if (prog.intro) {
       setStatusMessage(stripAudioTags(prog.intro));
       await speakText(prog.intro);
@@ -261,11 +272,25 @@ export default function SimplePlayPage() {
           const muted = useSoundStore.getState().muted;
           if (e.await_melody) await playMelody(e.tune, e.tempo, muted, e.custom);
           else void playMelody(e.tune, e.tempo, muted, e.custom);
+        } else if (e.type === 'save_skill') {
+          // 마지막 실행한 program 을 customSkill 로 저장
+          const last = lastProgramRef.current;
+          if (!last) {
+            setStatusMessage('❌ 저장할 동작이 없어요. 먼저 동작을 만들어보세요!');
+            return;
+          }
+          const saved = customSkillsStore.add({
+            artwork: (last.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
+            label: e.label.slice(0, 16),
+            emoji: e.emoji.slice(0, 4),
+            program: last,
+          });
+          setStatusMessage(`💾 "${saved.emoji} ${saved.label}" 저장됨!`);
         }
       },
     });
     setIsExecuting(false);
-  }, [isExecuting, board.status]);
+  }, [isExecuting, board.status, customSkillsStore, artwork, t]);
 
   // === Send to AI ===
   const sendPrompt = useCallback(async (prompt: string) => {
@@ -994,6 +1019,80 @@ export default function SimplePlayPage() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            {/* 💖 내 스킬 관리 — 작품별로 노출/숨김/삭제 */}
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4, color: C.textDark }}>
+                {t('settings.mySkills')}
+              </div>
+              <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10 }}>
+                {t('settings.mySkills.desc')}
+              </div>
+              {allCustomsForArtwork.length === 0 ? (
+                <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic', padding: '10px 12px', background: '#fff', border: `2px dashed ${C.textDark}`, borderRadius: 10 }}>
+                  {t('settings.mySkills.empty')}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {(() => {
+                    const visibleCount = allCustomsForArtwork.filter((s) => !s.simpleHidden).length;
+                    return allCustomsForArtwork.map((s) => {
+                      const hidden = !!s.simpleHidden;
+                      // 노출 3개 한도 초과 시 추가 노출 방지 안내
+                      const cannotShow = hidden && visibleCount >= 3;
+                      return (
+                        <div key={s.id} style={{
+                          background: hidden ? C.mainBg : C.pink,
+                          border: `2.5px solid ${C.textDark}`, borderRadius: 12,
+                          padding: '8px 12px',
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          opacity: hidden ? 0.65 : 1,
+                        }}>
+                          <span style={{ fontSize: 20 }}>{s.emoji}</span>
+                          <span style={{ flex: 1, fontSize: 14, fontWeight: 800, color: C.textDark }}>{s.label}</span>
+                          <button
+                            onClick={() => {
+                              if (cannotShow) {
+                                alert('쉬운 모드 칩은 최대 3개. 다른 스킬을 숨김 처리 후 다시 시도하세요.');
+                                return;
+                              }
+                              customSkillsStore.toggleSimpleHidden(s.id);
+                            }}
+                            title={hidden ? t('settings.mySkills.visible') : t('settings.mySkills.hidden')}
+                            style={{
+                              fontFamily: 'inherit', cursor: 'pointer',
+                              background: hidden ? '#fff' : C.purple,
+                              color: hidden ? C.textDark : '#fff',
+                              border: `2px solid ${C.textDark}`, borderRadius: 8,
+                              padding: '4px 10px', fontSize: 13, fontWeight: 800,
+                              opacity: cannotShow ? 0.4 : 1,
+                            }}
+                          >
+                            {hidden ? '🙈' : '⭐'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(`"${s.emoji} ${s.label}" — ${t('settings.mySkills.deleteConfirm')}`)) {
+                                customSkillsStore.remove(s.id);
+                              }
+                            }}
+                            title={t('settings.mySkills.delete')}
+                            style={{
+                              fontFamily: 'inherit', cursor: 'pointer',
+                              background: '#fff', color: C.textDark,
+                              border: `2px solid ${C.textDark}`, borderRadius: 8,
+                              padding: '4px 8px', fontSize: 13,
+                            }}
+                          >
+                            🗑
+                          </button>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
             </div>
           </div>
         </div>

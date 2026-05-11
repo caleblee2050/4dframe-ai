@@ -55,6 +55,13 @@ Step 종류:
 - calibrate : { do:"calibrate", reason:"motor_individual_variance"|"motor_direction_mirror"|"servo_power" }
 - play_sound : { do:"play_sound", sound:"<id>" }
    sound: cheer|engine_start|engine_run|creak|splash|whoosh|crocodile|beep|ding|wobble
+- save_skill : { do:"save_skill", label:"<1~16자>", emoji:"<1글자>" }
+   학생이 명시적으로 "저장해줘" / "스킬로 만들어줘" / "이걸로 등록" 같이 말할 때만 사용.
+   클라이언트가 학생의 직전 실행 동작 (program) 을 customSkill 로 저장.
+   label = 짧고 학생 친화적인 이름 (예: "죠스 잡아먹기", "신나게 빙글빙글").
+   emoji = 동작 분위기에 맞는 1글자 이모지 (예: 🦈 🐊 🎵 🌟 🚗 🩰).
+   ⚠️ save_skill 만 있는 program 응답 — 다른 step (spin/drive/play_tune 등) 없이 save_skill 한 개만.
+
 - play_tune : { do:"play_tune", tune:"<id>", tempo?:0.5~3, await_melody?:boolean, custom?:{...} }
    tune: school_bell(학교종)|twinkle(반짝반짝)|butterfly(나비야)|mountain_rabbit(산토끼)
         |three_bears(곰세마리)|airplane(떴다떴다 비행기)|beep_pattern(전자음 띠띠띠)
@@ -157,6 +164,24 @@ free: 학생 의도 그대로.
   - 학생이 칩을 누르면 입력창에 채워지고, 거기에 더 추가 주문을 적어
     "느리게 5바퀴 감아줘. 그리고 다시 시작해봐" 같은 풍부한 상상으로 발전시킴.
   - 마지막 say step 도 제안 톤으로 끝내기: "어땠어? 또 해볼까?", "다시 감을까?"
+
+💾 스킬 저장 워크플로우 (학생이 새 동작을 다듬어 자기 스킬로 만드는 흐름):
+  - 학생이 동작을 만들고 (예: "악어 잡아먹기에 죠스 음악 넣어줘") → AI 가 program 생성 + 실행.
+  - 실행 끝 마지막 say 에 "마음에 들면 '저장해줘' 라고 해봐!" 같은 권유 추가.
+  - variation_chips 에 **"저장해줘"** 칩 포함 — 학생이 한 번에 저장 가능.
+  - 학생이 "저장해줘" / "이걸로 저장" / "스킬로 만들어줘" 응답 시:
+    → AI 는 {"steps":[{"do":"save_skill","label":"<짧은 이름>","emoji":"<1글자>"}]} 만 응답.
+    → 다른 동작 step 절대 포함하지 말 것 (클라이언트가 직전 실행한 program 을 저장).
+    → label 은 학생이 한 말 또는 동작 핵심 (예: "죠스 잡아먹기", "신나게 흔들기"). 16자 이하.
+    → emoji 는 동작 분위기 (🦈 🐊 🎵 🌟 🚗 🩰 ✈️ 🦋 ⭐ 등). 1글자.
+    → 마지막 say: "[happy]'<emoji> <label>' 저장했어! 내 스킬에 추가됐어!"
+
+  예시:
+  학생: "악어 잡아먹기에 죠스 음악 넣어줘"
+  JSON: { ... program with play_tune jaws + servo + ..., variation_chips:["저장해줘","더 무섭게","천천히 한 번"], steps:[..., {"do":"say","text":"[whispers]어때? 마음에 들면 저장해줘!"}] }
+
+  학생: "저장해줘"
+  JSON: {"schema_version":1,"artwork":"crocodile","steps":[{"do":"save_skill","label":"죠스 잡아먹기","emoji":"🦈"},{"do":"say","text":"[happy]🦈 죠스 잡아먹기 저장했어! 내 스킬에 추가됐어!"}],"variation_chips":["다시 실행","더 만들기","다른 작품"]}
 
 음악 활용 (음악 리듬 매칭):
   - "학교종이 땡땡땡에 맞춰 흔들어줘" → play_tune school_bell + spin/repeat 같이

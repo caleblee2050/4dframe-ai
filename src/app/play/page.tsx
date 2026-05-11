@@ -116,6 +116,7 @@ const stepIcon: Record<Step['do'], string> = {
   spin: '🔄', drive: '🚗', servo: '🎚', speed: '⚡',
   stop: '⏹', wait: '⏱', wait_for_distance: '👀', repeat: '🔁',
   say: '💬', calibrate: '🔧', play_sound: '🔊', play_tune: '🎵',
+  save_skill: '💾',
 };
 
 function describeStep(step: Step): string {
@@ -155,6 +156,8 @@ function describeStep(step: Step): string {
       };
       return `🎵 ${tuneMap[step.tune] ?? step.tune}`;
     }
+    case 'save_skill':
+      return `💾 저장: ${step.emoji} ${step.label}`;
   }
 }
 
@@ -324,6 +327,18 @@ export default function PlayPage() {
             servo_power: '서보가 약해요. 9V 배터리가 꽂혀 있는지 확인해주세요.',
           })[e.reason];
           setSayMessages((s) => [...s, { text: `🔧 ${msg}`, ts: Date.now() }]);
+        }
+        else if (e.type === 'save_skill') {
+          // 마지막 실행한 program (state) 을 customSkill 로 저장
+          if (program) {
+            const saved = customSkills.add({
+              artwork: (program.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
+              label: e.label.slice(0, 16),
+              emoji: e.emoji.slice(0, 4),
+              program,
+            });
+            setSayMessages((s) => [...s, { text: `💾 "${saved.emoji} ${saved.label}" 저장됨!`, ts: Date.now() }]);
+          }
         }
       },
     });

@@ -17,6 +17,9 @@ export interface CustomSkill {
   description?: string;
   program: Program;
   createdAt: number;
+  // 쉬운 모드에서 칩으로 노출할지. false (default) = 노출, true = 숨김.
+  // 작품당 노출은 최대 3개. 4개 이상 저장 시 설정에서 교체 가능.
+  simpleHidden?: boolean;
 }
 
 interface CustomSkillsState {
@@ -24,6 +27,7 @@ interface CustomSkillsState {
   add: (s: Omit<CustomSkill, 'id' | 'createdAt'>) => CustomSkill;
   remove: (id: string) => void;
   clear: () => void;
+  toggleSimpleHidden: (id: string) => void;
 }
 
 function genId(): string {
@@ -44,6 +48,9 @@ export const useCustomSkillsStore = create<CustomSkillsState>()(
       },
       remove: (id) => set((state) => ({ skills: state.skills.filter((s) => s.id !== id) })),
       clear: () => set({ skills: [] }),
+      toggleSimpleHidden: (id) => set((state) => ({
+        skills: state.skills.map((s) => s.id === id ? { ...s, simpleHidden: !s.simpleHidden } : s),
+      })),
     }),
     {
       name: '4dframe-custom-skills',
