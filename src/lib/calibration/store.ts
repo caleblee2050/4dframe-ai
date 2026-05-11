@@ -21,6 +21,10 @@ export interface BoardCalibration {
   startThreshold: Record<MotorId, number>;   // 0~9
   dirOverride: Record<MotorId, 1 | -1>;
   measuredAt: number | null;
+  // 9V 배터리 연결 여부 — 키보드 화살표/일부 자동 매핑에서 기본 속도 결정.
+  // true(기본): 배터리 있음 → 키보드 V2 (보통 충분히 잘 굴러감)
+  // false: 배터리 없음 → 키보드 V3 (USB 5V만으로는 약해서 한 단계 위)
+  has9VBattery: boolean;
 }
 
 interface CalibrationState {
@@ -29,6 +33,7 @@ interface CalibrationState {
   setStartThreshold: (motor: MotorId, level: number) => void;
   toggleDir: (motor: MotorId) => void;
   setMeasured: () => void;
+  setHas9VBattery: (v: boolean) => void;
   reset: () => void;
 }
 
@@ -47,6 +52,7 @@ const initial: BoardCalibration = {
     M4: MOTORS.M4.defaultDir,
   },
   measuredAt: null,
+  has9VBattery: true,   // 기본 ON — 4D프레임 + 아두이노 키트의 표준 구성
 };
 
 export const useCalibrationStore = create<CalibrationState>()(
@@ -71,18 +77,30 @@ export const useCalibrationStore = create<CalibrationState>()(
       setMeasured: () => set((s) => ({
         current: { ...s.current, measuredAt: Date.now() },
       })),
+      setHas9VBattery: (v) => set((s) => ({
+        current: { ...s.current, has9VBattery: v },
+      })),
       reset: () => set({ current: initial }),
     }),
     {
       name: '4dframe-calibration',
       storage: createJSONStorage(() => localStorage),
-      // version 2 (5/9 D-1): v1.3.2 진단 시기 비정상 시동 V (V8/V9) 흔적이 남아
-      // 자연어 모드 단계차를 무력화 — version bump 로 강제 reset, 다음 진입 시 default 적용.
-      version: 2,
+      // v2 (5/9): v1.3.2 진단 흔적 폐기.
+      // v3 (5/11 PM): has9VBattery 필드 추가 — 옛 상태에 default true 채움.
+      version: 3,
       migrate: (persistedState, version) => {
         if (version < 2) {
-          // v1.3.2 진단 흔적 폐기 → default initial 적용
           return { current: initial } as { current: BoardCalibration };
+        }
+        if (version < 3) {
+          const s = persistedState as { current: Partial<BoardCalibration> };
+          return {
+            current: {
+              ...initial,
+              ...s.current,
+              has9VBattery: s.current?.has9VBattery ?? true,
+            },
+          } as { current: BoardCalibration };
         }
         return persistedState as { current: BoardCalibration };
       },

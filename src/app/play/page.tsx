@@ -863,7 +863,14 @@ export default function PlayPage() {
       const ay = (keysPressed.has('ArrowDown') ? 1 : 0) + (keysPressed.has('ArrowUp') ? -1 : 0);
       const len = Math.sqrt(ax * ax + ay * ay);
       if (len === 0) onJoystickMove(0, 0, 0);
-      else onJoystickMove(ax / len, ay / len, 1);
+      else {
+        // 9V 배터리 있음 → V2 / 없음 → V3 (USB 5V 만이라 한 단계 위 필요).
+        // mag = level / 9 가 ceil(mag*9) = level 을 보장.
+        const has9V = useCalibrationStore.getState().current.has9VBattery;
+        const level = has9V ? 2 : 3;
+        const mag = level / 9;
+        onJoystickMove(ax / len * mag, ay / len * mag, mag);
+      }
     };
     const isInputFocused = () => {
       const ae = document.activeElement;

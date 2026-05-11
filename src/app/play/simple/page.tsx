@@ -179,13 +179,18 @@ export default function SimplePlayPage() {
   useEffect(() => {
     if (artwork !== 'car_4wd' || !isConnectedEarly) return;
     const keys = new Set<string>();
-    // 키보드는 단순 — V5 (보통 속도) 고정. 위치값 변속은 조이스틱 UI 만.
+    // 9V 배터리 있음 → V2 / 없음 → V3. 위치값 변속은 조이스틱 UI 만.
     const update = () => {
       const ax = (keys.has('ArrowRight') ? 1 : 0) + (keys.has('ArrowLeft') ? -1 : 0);
       const ay = (keys.has('ArrowDown') ? 1 : 0) + (keys.has('ArrowUp') ? -1 : 0);
       const len = Math.sqrt(ax * ax + ay * ay);
       if (len === 0) onJoystickMove(0, 0, 0);
-      else onJoystickMove(ax / len, ay / len, 0.55);
+      else {
+        const has9V = useCalibrationStore.getState().current.has9VBattery;
+        const level = has9V ? 2 : 3;
+        const mag = level / 9;
+        onJoystickMove(ax / len * mag, ay / len * mag, mag);
+      }
     };
     const isInputFocused = () => {
       const ae = document.activeElement;
@@ -974,6 +979,29 @@ export default function SimplePlayPage() {
                 </div>
                 <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
                   {t('settings.distanceReact.desc')}
+                </div>
+              </div>
+            </label>
+
+            {/* 9V 배터리 — 키보드 화살표 기본 속도 결정 */}
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              background: cal.current.has9VBattery ? C.mint : '#fff',
+              border: `3px solid ${C.textDark}`, borderRadius: 16,
+              padding: '12px 16px', cursor: 'pointer',
+            }}>
+              <input
+                type="checkbox"
+                checked={cal.current.has9VBattery}
+                onChange={(e) => cal.setHas9VBattery(e.target.checked)}
+                style={{ width: 20, height: 20, cursor: 'pointer' }}
+              />
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.textDark }}>
+                  🔋 {t('settings.has9V')}
+                </div>
+                <div style={{ fontSize: 11, color: C.textMuted, marginTop: 2 }}>
+                  {t('settings.has9V.desc')}
                 </div>
               </div>
             </label>
