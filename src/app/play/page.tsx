@@ -785,10 +785,9 @@ export default function PlayPage() {
 
     const v13 = isV13Plus(b.lastBoot?.fw);
 
-    // ★ V level 은 조이스틱 거리(mag) 기반 — 조금 밀면 V3, 끝까지 밀면 V9.
-    //   "조금 밀었을 때와 끝까지 밀었을 때 속도가 달라야" 직관 fix.
-    //   좌/우 모터 ratio (left/right 부호+크기) 는 dir 와 한쪽 stop 여부로만 반영.
-    const speedLevel = Math.max(1, Math.min(9, Math.round(mag * 9)));
+    // ★ V level = ceil(mag * 9). Joystick 이 mag 를 재정규화 (데드존 직후=0, 끝=1) 해서
+    //   아주 조금 밀면 V1, 끝까지 = V9. 9등분 균등.
+    const speedLevel = Math.max(1, Math.min(9, Math.ceil(mag * 9)));
     const lDir = left > 0.10 ? 1 : left < -0.10 ? -1 : 0;
     const rDir = right > 0.10 ? 1 : right < -0.10 ? -1 : 0;
     // 한 쪽이 정지면 그 쪽 PWM 0, 도는 쪽만 speedLevel.

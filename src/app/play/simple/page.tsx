@@ -105,7 +105,7 @@ export default function SimplePlayPage() {
     const norm = Math.max(Math.abs(left), Math.abs(right), 1);
     left /= norm; right /= norm;
     const v13 = isV13Plus(b.lastBoot?.fw);
-    const speedLevel = Math.max(1, Math.min(9, Math.round(mag * 9)));
+    const speedLevel = Math.max(1, Math.min(9, Math.ceil(mag * 9)));
     const lDir = left > 0.10 ? 1 : left < -0.10 ? -1 : 0;
     const rDir = right > 0.10 ? 1 : right < -0.10 ? -1 : 0;
     const lLevel = lDir !== 0 ? speedLevel : 0;
