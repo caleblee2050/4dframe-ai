@@ -1,6 +1,6 @@
 # 4DFrame AI — Walkthrough
 
-> 마지막 업데이트: 2026-05-11 (PM 후속 세션 — Turso 라이브 완료)
+> 마지막 업데이트: 2026-05-12 (PM — BLE 활성화 + 조이스틱 안정화 + 펌웨어 v1.4.1)
 > **다음 세션 시작 시 이 문서만 읽고 즉시 작업 진입 가능**
 > 페이지 안내: [docs/PAGES.md](docs/PAGES.md)
 > 제품 비전: [docs/VISION.md](docs/VISION.md)
@@ -24,6 +24,89 @@ npm run dev                       # 로컬 dev (Mac)
 - `/play/identify` 사진 인식
 - `/play/test` 디버그
 - `/admin` 관리자
+
+---
+
+## ✅ 5/12 PM — BLE 활성화 + 조이스틱 안정화 + 펌웨어 v1.4.1
+
+### A. 회로도 입수 → 모터 매핑 정정
+- ThinkGen Inc 에서 Ami5_V01 회로도 입수. 펌웨어 + 앱 모두 정정:
+  - **M1 = LM_A = 앞왼쪽** (dir D8/A0, PWM D5)
+  - **M2 = LM_B = 뒤왼쪽** (dir A1/A2, PWM D6)
+  - **M3 = RM_A = 앞오른쪽** (dir A3/A4, PWM D9)
+  - **M4 = RM_B = 뒤오른쪽** (dir D13/A5, PWM D10)
+- 이전 코드 오류: M1.pwmPin=D6, M2.pwmPin=D5 (반대), car_4wd 알리아스가 앞/뒤 페어로 묶임 → 조이스틱 차동 회전 미작동.
+- 정정 후: 좌측 페어 M1+M2 (X0/X1), 우측 페어 M3+M4 (X2/X3). 좌/우 회전 정상.
+- **D4 LED-A + BLE-RX 공유** 메모 — LED 미사용이라 영향 없음.
+
+### B. 펌웨어 v1.4 → v1.4.1
+- **v1.4 (BLE 활성화)**: SoftwareSerial(D4=RX, D12=TX) 9600 baud. JDY-23 default 그대로. v1.3.x 의 baud changer (HW UART 시도) 폐기.
+- **STBY 충돌 회피**: D12 가 v1.3.x 에서 TB6612FNG STBY 였는데 BLE_TX 와 같은 핀. STBY 드라이브 제거 — PCB 풀업 가정. 실제 사용자 보드 3개 모두 모터 정상 작동 (PCB 풀업 확인됨).
+- **Brown-out fix (v1.3.7 도입 ⊕ v1.4 유지)**: 부팅 시 servo attach 제거. SG90 의 인러시가 USB 5V brown-out → AVR reset 무한 루프 → "보드 무응답" 의 진짜 원인이었음. lazy attach 로 첫 servo 명령 시 attach.
+- **명령 경로 이중화**: `processCommand(Stream& src, char cmd)` 로 USB Serial + bleSerial 같은 핸들러. `printBoth()` 헬퍼로 진단 출력 양쪽 송출.
+- **v1.4.1 watchdog**: 5초 무수신 → 자동 `stopAll` + `WATCHDOG:stop` 로그. BLE 신호 끊김 / 앱 hang / 페이지 닫힘 등 어떤 시나리오에서도 모터 영원 회전 차단.
+- **펌웨어 크기**: 8886 bytes / 30720 (29%). 모든 사용자 보드 3개 v1.4.1 플래시 완료.
+
+### C. 앱 BLE 통합
+- `webSerial.ts` 의 `connectBle()` 활용 (JDY-23 의 FFE0/FFE1 service/characteristic).
+- 쉬운 모드 헤더 옆 작은 📶 버튼 — 미연결 상태에서만 노출. Web Bluetooth API 직접 호출.
+- **연결 직후 안전 시퀀스**: `0V3` (stop + 안전 PWM 84) 송신, 그 후 250ms 간격 8회 stop 재송신 → BLE GATT handshake 노이즈 → 펌웨어가 'W' / '@' 로 잘못 해석해 모터 폭주 차단.
+- **disconnect 시 명시 stop** — 사용자가 OFF 버튼 누를 때 마지막 회전 명령 강제 정지.
+- **2초 무응답 안내** — BLE 연결됐는데 보드 응답 없으면 v1.4+ 펌웨어 / 9V 배터리 / D4-D12 결선 체크 가이드.
+
+### D. 조이스틱 폭주/속도조절 안됨 원인 파악 + fix
+디버깅 과정에서 발견한 진짜 원인들:
+1. **펌웨어 X 명령 부작용**: `case 'X'` 의 `detachServosAndRestorePwm()` → `applyPwmAll()` 가 모든 PWM 핀을 `globalPwm`(부팅 default 255) 으로 reset. 앱이 보낸 `X0{lv} X1{lv} X2{lv} X3{lv}` 시퀀스에서 X2/X3 처리 시 D5/D6 도 풀파워 덮어써짐. → 조이스틱이 X 명령 폐기. **V{level} 한 줄만 송신** → 펌웨어 4모터 동일 PWM.
+2. **부동소수 오차**: `mag = 2/9` → `ceil(2.0000004) = 3`. V2 의도가 V3 송신. → `ceil(mag*9 - 1e-6)` epsilon.
+3. **lastBoot 도착 대기**: 조이스틱이 `if (v13) cmds.push('V${lv}')` 라 lastBoot 채워지기 전 (~500ms) V 안 보냄 → 풀파워 255. → V 무조건 송신 (v1.0 펌웨어는 V 무시 = 안전).
+4. **timer1 reset glitch**: 같은 V level 매번 송신 → 펌웨어 `detachServos+applyPwmAll` 반복 → timer1 reset 빈도↑ → 모터 jerk. → `lastVLevelRef` 로 dedupe.
+5. **새로고침 후 폭주**: connect 직후 globalPwm 초기화 없음. → `0V3` 자동 송신 (stop + 안전 PWM 초기화).
+6. **M3 default 방향**: 펌웨어 `M3_DIR=-1` (v1.0 잔재). 회로도 기준 정방향 1이어야. → calibrationStore default 정정 + BOOT 받으면 `syncMotorDirsToFirmware()` 자동 호출해 펌웨어와 sync (M3 만 F3 토글 1회).
+
+### E. 키보드 화살표 안정화
+- 직진/후진 기본 V3 (PWM 84) 고정 — 9V 배터리 토글 제거 (사용자 요청).
+- 좌/우 단독 (제자리 회전) V5 boost — 4WD spin-in-place 토크 필요.
+- 좌상/좌하 등 곡선 주행 V3 — 자연스러운 곡선.
+- 4모터 페어링 정정 후 좌/우 페어 정확하게 작동.
+
+### F. 조이스틱 시각화 — 9단계 동심원
+- 데드존 25 → 8px. `mag = (dist - DEAD_ZONE) / (MAX_REACH - DEAD_ZONE)` 재정규화.
+- 9개 동심원 가이드 링, 활성 레벨 진한색.
+- 썸 안에 현재 `V1`~`V9` 또는 `⏹` 표시.
+
+### G. BLE keepalive
+- 조이스틱 같은 sig 반복 송신 시에도 500ms 마다 재송신.
+- 사용자 능동 사용 중엔 펌웨어 측 byte 활성 유지 → v1.4.1 watchdog 발동 X.
+- BLE 신호 끊기는 순간 keepalive 송신 실패 → 펌웨어 측 무수신 5초 → 자동 stopAll.
+
+### H. 대화형 모터 캘리브레이션
+- 새 DSL step: `set_motor_dir { motor:M1~M4, dir:1|-1 }` / `set_motor_threshold { motor, level:0~9 }`.
+- 학생이 "앞 오른쪽 바퀴 안 돌아" / "거꾸로 돌아" 라고 말하면 AI 가:
+  1. 해당 모터 한 번 회전 + say "이 바퀴 돌았어?"
+  2. "안 돌았어" → threshold +1 재시도
+  3. "거꾸로 돌았어" → dir 반전 + 재확인
+  4. "맞아" → 다음 모터로
+- localStorage `4dframe-calibration` v4 영구 저장 (BOOT 시 펌웨어 sync).
+
+### I. 5단계 속도 라벨 + 자연어 매핑
+- SpeedLabel: `아주 느리게` (V1 절대) / `느리게` (threshold) / `보통` (mid) / `빠르게` (V8) / `아주 빠르게` (V9).
+- systemPrompt 자연어 매핑표: "기어가듯이" → 아주 느리게, "쌩!" → 아주 빠르게 등.
+- "더 느리게/빠르게" 상대 표현 — history 의 직전 speed 에서 한 단계 이동.
+- 옛 program 호환: `천천히` → `느리게` 자동 alias.
+
+### J. 쉬운 모드 스킬 관리 UI
+- 카드 우상단 작은 ✕ 버튼 — 누르면 simpleHidden / hiddenBuiltin 토글 (DB 영구 보존, 삭제 X).
+- 설정 모달 "내 스킬 관리": custom + built-in 통합 list. ⭐/🙈 토글, 🗑 영구 삭제 (custom 만).
+- 3개 슬롯 한도 통합 카운트.
+- DB: 새 테이블 `hidden_builtin` + `/api/builtin-hidden` POST/DELETE.
+
+### K. 입력창 포커스 복원
+- sendPrompt finally + executeProgram 종료 시 `textareaRef.current?.focus()`.
+- 학생이 대화 끝나면 바로 다음 입력 시작 가능.
+
+### L. save_skill 무한 루프 차단
+- 이전 버그: AI 가 save_skill + say 두 step 응답 → `isSaveOnly = every` 가 say 때문에 false → lastProgramRef 가 save_skill 프로그램으로 덮어쓰여짐 → 자신을 저장 → 클릭마다 무한.
+- 수정: `hasSaveSkill = some` 으로 의미 변경. `customStore.add` + `/api/skills` 서버 모두 save_skill step 재귀 strip (defense in depth).
 
 ---
 
@@ -275,19 +358,30 @@ npm run dev                       # 로컬 dev (Mac)
 | 버전 | 위치 | 상태 |
 |---|---|---|
 | v1.0 | ThinkGen_Framework `b62f3c0` | 4D Frame 본사 원본 |
-| ~~v1.3~~ | `469c5f6` | M2/M3 핀 스왑 + V/X/F/? — timer1 회귀 |
-| ~~v1.3.2~~ | `1a068e5` | servo detach 시도. timer1 모드 reset 빠져 무효 |
-| **v1.3.3** | `a46626f` | TCCR1A/B 명시 reset. **사용자 보드 플래시 + Verify OK** |
+| ~~v1.3.3~~ | `a46626f` | TCCR1A/B reset. v1.0 라우팅 잔재 (M3_DIR=-1) |
+| ~~v1.3.6~~ | `8f2f084` | BLE baud changer 진단 강화 — HW UART 시도 (잘못된 핀) |
+| ~~v1.3.7~~ | (백업만) | Brown-out fix — 부팅 servo attach 제거 |
+| ~~v1.4~~ | 5/11 PM | SoftwareSerial(D4/D12) BLE + STBY 제거 |
+| **v1.4.1** | 5/12 PM | + 5초 watchdog (BLE 끊김 fail-safe). **사용자 보드 3개 플래시 완료** |
 
 펌웨어 어휘 (사용 빈도순):
 - **W/A/S/D**: 4모터 전후좌우 (모든 모터)
 - **0**: 전체 정지
-- **V0~V9**: globalPwm (v1.3+)
+- **V0~V9**: globalPwm (v1.3+). PWM = level × 28 (V9 = 255)
 - **1234/!@#$**: 단일 모터 forward/reverse
 - **5/%/6/^**: 서보 SA(입) / SB(꼬리) ±15도
-- **X{idx}{duty}**: 단일 PWM 핀 변조 (idx 0=D5/M2, 1=D6/M1, 2=D9/M3, 3=D10/M4)
-- **F1~F4**: 모터 방향 토글
+- **X{idx}{duty}**: 단일 PWM 핀 변조 ⚠ **앱 사용 X** — detachServos+applyPwmAll 가 globalPwm 으로 덮어쓰는 부작용
+- **F1~F4**: 모터 방향 토글 (M{n}_DIR runtime 반전)
 - **?**: 진단 / **\***: 소프트 reset
+- **출력 라인**: `BOOT:Ami5_V01:FW1.4.1` / `BLE:ready(9600,D4-D12)` / `DIST:<cm>` / `WATCHDOG:stop` / `ID/FW/PWM/posA/posB/DIR`
+
+회로도 (5/11 PM 입수, Ami5_V01):
+- M1 = LM_A = **앞왼쪽** (dir D8/A0, PWM D5)
+- M2 = LM_B = **뒤왼쪽** (dir A1/A2, PWM D6)
+- M3 = RM_A = **앞오른쪽** (dir A3/A4, PWM D9, 펌웨어 default DIR=-1 → 앱이 BOOT 시 F3 자동 토글로 sync)
+- M4 = RM_B = **뒤오른쪽** (dir D13/A5, PWM D10)
+- BLE: D4 RX (← BLE TX), D12 TX (→ BLE RX), 9600 baud
+- LED-A (D4 silkscreen) / LED-B (D12 silkscreen) — 현재 앱에서 미사용 (BLE 전용)
 
 ---
 
@@ -343,28 +437,30 @@ public/fdland/              — 4D Land 디자인 자산 (현재 미사용)
 
 ## 5. 다음 작업 후보 (우선순위)
 
-### 🔴 시급 (사용자 의향 따라)
-1. **폭파도** (사용자 비전 마지막) — 사진 인식 결과 + Gemini Vision → 분해 일러스트. SVG 또는 GPT-Image. /play/identify 페이지 확장 또는 새 라우트.
-2. **음성 입력 대안** — Web Speech API 환경 의존 우회. MediaRecorder + Gemini Audio API 직접 호출.
+### 🔴 5/13 시연 직전 — 현장 안정성
+1. **현장 BLE 검증** — 5/12 PM 까지 데스크 검증 OK. 현장 PC + 휴대폰 BLE 연결 / 신호 잃었을 때 watchdog 동작 확인.
+2. **모터 캘리브레이션 시연 준비** — 새 보드는 모터 개체차 있음. 시연 직전 학생이 "오른쪽 바퀴 안 돌아" 부르면 대화형 캘리브 흐름 시연.
+3. **다국어 시연 PC** — 한/영/몽 토글 확인.
 
-### 🟡 차순위
-3. **얼굴/머리 모드** — MediaPipe FaceLandmarker 추가. CameraPanel 의 head_tilt placeholder 완성.
-4. **다른 작품 executor 화** — viking_swing, swing_round 도 음악 sync 화 (현재는 step 시퀀스).
-5. **사진 인식 페이지의 chat-like 대화** — 학생이 사진 보고 질문 → AI 응답 흐름.
+### 🟡 시연 후 (D+1~D+7)
+4. **폭파도** (사용자 비전 마지막) — 사진 인식 결과 + Gemini Vision → 분해 일러스트.
+5. **음성 입력 대안** — Web Speech API 환경 의존 우회 (MediaRecorder + Gemini Audio).
+6. **얼굴/머리 모드** — MediaPipe FaceLandmarker 추가.
+7. **다른 작품 executor 화** — viking_swing, swing_round 도 음악 sync 화.
 
 ### 🟢 후속 (D+ 미정)
-6. **Turso 영속 메트릭** — admin/metrics 가 in-memory.
-7. **사용자 인증 (Clerk)** — 커스텀 스킬 서버 동기화.
-8. **결제 통합** (Stripe / Toss) — 유료 버전.
-9. **펌웨어 자동 플래시 옵션** — Web Serial STK500v1 JS 포팅.
+8. **Turso 영속 메트릭** — admin/metrics 가 in-memory.
+9. **사용자 인증 (Clerk)** — 커스텀 스킬 / 캘리브레이션 사용자별 분리.
+10. **결제 통합** (Stripe / Toss) — 유료 버전.
+11. **펌웨어 자동 플래시** — Web Serial STK500v1 JS 포팅. 현재는 `python3.14 stk500_flash.py`.
 
 ---
 
 ## 6. 결정/사실 빠른 참조
 
 - **시리얼 포트** (Mac): `/dev/cu.usbserial-A5069RR4`
-- **Baud**: 115200
-- **사용자 보드 펌웨어**: v1.3.3 (Ami5_V01)
+- **Baud**: 115200 (USB) / 9600 (BLE SoftwareSerial)
+- **사용자 보드 펌웨어**: **v1.4.1** (Ami5_V01) — 3개 보드 모두 플래시 완료
 - **펌웨어 컴파일**: `arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328 --build-path "$(pwd)/build" 04_Base_Program/MechatronicsController/`
 - **펌웨어 플래시**: `python3.14 stk500_flash.py 04_Base_Program/MechatronicsController/build/MechatronicsController.ino.hex`
 - **모터 매핑 v1.3.3** (5/11 PM 회로도 입수 후 정정):
