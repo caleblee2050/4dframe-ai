@@ -1,0 +1,100 @@
+// /api/skills — customSkill 영구 저장 (Turso libsql).
+// GET ?artwork=xxx 또는 GET (전체) — 스킬 list
+// POST { artwork, label, emoji, program, description? } — 새 스킬 추가
+//
+// 단일 테넌트 (로그인 X). 모든 PC/브라우저가 같은 스킬 공유.
+// v2 에서 user_id 추가 + 로그인 시 분리.
+
+import { getDb, type SkillRow, type Artwork } from '@/lib/db/turso';
+import type { Program } from '@/lib/dsl/schema';
+import { validateProgram } from '@/lib/dsl/schema';
+
+export const runtime = 'nodejs';
+
+const VALID_ARTWORKS = new Set<Artwork>(['viking', 'car_4wd', 'swing', 'crocodile', 'ballerina', 'free']);
+
+function rowToSkill(r: SkillRow): {
+  id: string; artwork: Artwork; label: string; emoji: string;
+  description: string | null; program: Program; createdAt: number; simpleHidden: boolean;
+} {
+  return {
+    id: r.id,
+    artwork: r.artwork as Artwork,
+    label: r.label,
+    emoji: r.emoji,
+    description: r.description,
+    program: JSON.parse(r.program_json) as Program,
+    createdAt: r.created_at,
+    simpleHidden: r.simple_hidden === 1,
+  };
+}
+
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const artwork = url.searchParams.get('artwork');
+
+    const db = getDb();
+    const rs = artwork
+      ? await db.execute({
+          sql: 'SELECT id, artwork, label, emoji, description, program_json, created_at, simple_hidden FROM skills WHERE artwork = ? ORDER BY created_at DESC',
+          args: [artwork],
+        })
+      : await db.execute('SELECT id, artwork, label, emoji, description, program_json, created_at, simple_hidden FROM skills ORDER BY created_at DESC');
+
+    const skills = rs.rows.map((r) => rowToSkill(r as unknown as SkillRow));
+    return Response.json({ skills });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[skills GET]', msg);
+    return Response.json({ error: msg }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json() as {
+      artwork?: string;
+      label?: string;
+      emoji?: string;
+      description?: string;
+      program?: unknown;
+    };
+
+    if (!body.artwork || !VALID_ARTWORKS.has(body.artwork as Artwork)) {
+      return Response.json({ error: '잘못된 artwork' }, { status: 400 });
+    }
+    if (!body.label || typeof body.label !== 'string' || body.label.length === 0 || body.label.length > 16) {
+      return Response.json({ error: 'label 1~16자' }, { status: 400 });
+    }
+    if (!body.emoji || typeof body.emoji !== 'string' || body.emoji.length === 0 || body.emoji.length > 4) {
+      return Response.json({ error: 'emoji 1~4자' }, { status: 400 });
+    }
+    // program 검증
+    let validProgram: Program;
+    try {
+      validProgram = validateProgram(body.program);
+    } catch (e) {
+      return Response.json({ error: 'program 검증 실패: ' + (e instanceof Error ? e.message : String(e)) }, { status: 400 });
+    }
+
+    const id = crypto.randomUUID();
+    const createdAt = Date.now();
+    const db = getDb();
+    await db.execute({
+      sql: 'INSERT INTO skills (id, artwork, label, emoji, description, program_json, created_at, simple_hidden) VALUES (?, ?, ?, ?, ?, ?, ?, 0)',
+      args: [id, body.artwork, body.label, body.emoji, body.description ?? null, JSON.stringify(validProgram), createdAt],
+    });
+    return Response.json({
+      skill: {
+        id, artwork: body.artwork, label: body.label, emoji: body.emoji,
+        description: body.description ?? null, program: validProgram,
+        createdAt, simpleHidden: false,
+      },
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[skills POST]', msg);
+    return Response.json({ error: msg }, { status: 500 });
+  }
+}

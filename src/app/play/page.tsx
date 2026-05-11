@@ -168,6 +168,12 @@ export default function PlayPage() {
   const customSkills = useCustomSkillsStore();
   const gestureMapping = useGestureMappingStore();
 
+  // Turso 서버에서 스킬 fetch — 새로고침해도 + 다른 PC 도 같은 스킬
+  useEffect(() => {
+    if (!customSkills.loaded) void customSkills.fetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [artwork, setArtwork] = useState<PromptContext['artwork']>('free');
   const [distanceReactivity, setDistanceReactivity] = useState(false);
   const [input, setInput] = useState('');
@@ -329,15 +335,19 @@ export default function PlayPage() {
           setSayMessages((s) => [...s, { text: `🔧 ${msg}`, ts: Date.now() }]);
         }
         else if (e.type === 'save_skill') {
-          // 마지막 실행한 program (state) 을 customSkill 로 저장
+          // 마지막 실행한 program (state) 을 customSkill 로 저장 (Turso 서버 sync)
           if (program) {
-            const saved = customSkills.add({
+            const saved = await customSkills.add({
               artwork: (program.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
               label: e.label.slice(0, 16),
               emoji: e.emoji.slice(0, 4),
               program,
             });
-            setSayMessages((s) => [...s, { text: `💾 "${saved.emoji} ${saved.label}" 저장됨!`, ts: Date.now() }]);
+            if (saved) {
+              setSayMessages((s) => [...s, { text: `💾 "${saved.emoji} ${saved.label}" 저장됨!`, ts: Date.now() }]);
+            } else {
+              setSayMessages((s) => [...s, { text: `❌ 저장 실패 — 네트워크/DB 확인`, ts: Date.now() }]);
+            }
           }
         }
       },
@@ -441,8 +451,8 @@ export default function PlayPage() {
     });
   };
 
-  // 💾 현재 program 을 내 스킬로 저장 — localStorage persist (4dframe-custom-skills)
-  const onSaveSkill = () => {
+  // 💾 현재 program 을 내 스킬로 저장 — Turso DB (모든 PC 공유)
+  const onSaveSkill = async () => {
     if (!program) return;
     const defaultLabel = stripAudioTags(program.intro ?? '').slice(0, 16) || '내 동작';
     const label = window.prompt('이 동작에 이름을 붙여줘! (1~16자)', defaultLabel);
@@ -450,23 +460,20 @@ export default function PlayPage() {
     const trimmed = label.trim().slice(0, 16);
     const emojiInput = window.prompt('이모지 하나 골라줘 (예: 🌟 🎯 💖 🚀)', '⭐');
     const emoji = (emojiInput?.trim() || '⭐').slice(0, 4);
-    const saved = customSkills.add({
+    const saved = await customSkills.add({
       artwork: (program.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
       label: trimmed,
       emoji,
       program,
     });
-    // 진단 — 실제 localStorage 에 저장됐는지 확인
-    const storeAfter = customSkills.skills;
-    const lsRaw = typeof window !== 'undefined' ? window.localStorage.getItem('4dframe-custom-skills') : null;
-    const lsCount = lsRaw ? (JSON.parse(lsRaw).state?.skills?.length ?? '?') : '없음';
-    console.log('[save-skill]', { saved: saved.id, storeCount: storeAfter.length, lsCount, lsExists: !!lsRaw });
+    if (!saved) {
+      alert('❌ 저장 실패 — 네트워크 또는 DB 연결 확인.');
+      return;
+    }
     alert(
-      `저장 완료! "${emoji} ${trimmed}"\n\n` +
+      `저장 완료! "${saved.emoji} ${saved.label}"\n\n` +
       `📍 화면의 "💖 내 스킬" 카드 (분홍 카드)에서 다시 실행할 수 있어요.\n` +
-      `🌟 쉬운 모드 (/play/simple) 에도 자동으로 보여요 — 학생이 칩 클릭으로 즉시 실행 가능.\n\n` +
-      `메모리: ${storeAfter.length}개 / localStorage: ${lsCount}개\n` +
-      `(localStorage 가 "없음" 이면 시크릿 모드일 수 있어요)`
+      `🌟 쉬운 모드 + 모든 PC 에서 자동으로 보여요 (Turso DB 영구 저장).`
     );
   };
 

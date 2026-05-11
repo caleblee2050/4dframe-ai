@@ -273,19 +273,23 @@ export default function SimplePlayPage() {
           if (e.await_melody) await playMelody(e.tune, e.tempo, muted, e.custom);
           else void playMelody(e.tune, e.tempo, muted, e.custom);
         } else if (e.type === 'save_skill') {
-          // 마지막 실행한 program 을 customSkill 로 저장
+          // 마지막 실행한 program 을 customSkill 로 저장 (Turso 서버 sync)
           const last = lastProgramRef.current;
           if (!last) {
             setStatusMessage('❌ 저장할 동작이 없어요. 먼저 동작을 만들어보세요!');
             return;
           }
-          const saved = customSkillsStore.add({
+          const saved = await customSkillsStore.add({
             artwork: (last.artwork ?? artwork ?? 'free') as NonNullable<PromptContext['artwork']>,
             label: e.label.slice(0, 16),
             emoji: e.emoji.slice(0, 4),
             program: last,
           });
-          setStatusMessage(`💾 "${saved.emoji} ${saved.label}" 저장됨!`);
+          if (saved) {
+            setStatusMessage(`💾 "${saved.emoji} ${saved.label}" 저장됨!`);
+          } else {
+            setStatusMessage('❌ 저장 실패 — 네트워크/DB 확인');
+          }
         }
       },
     });
@@ -487,6 +491,14 @@ export default function SimplePlayPage() {
 
   const onMicToggle = () => { if (listening) stopMic(); else void startMic(); };
   useEffect(() => () => cleanupMic(), [cleanupMic]);
+
+  // 페이지 mount 시 Turso 서버에서 스킬 fetch — 새로고침해도 + 다른 PC 도 같은 스킬
+  useEffect(() => {
+    if (!customSkillsStore.loaded) {
+      void customSkillsStore.fetch();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 페이지 진입 시 textarea 에 자동 focus — 학생이 즉시 입력 가능
   useEffect(() => {
