@@ -19,12 +19,12 @@ const MOTOR_IDS: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
 const PROGRAMS: Array<{ id: string; label: string; emoji: string; program: Program }> = [
   {
     id: 'spin-m1',
-    label: 'M1 천천히 1초',
+    label: 'M1 느리게 1초',
     emoji: '🔄',
     program: {
       schema_version: 1,
-      intro: '모터 1을 천천히 돌려볼게요.',
-      steps: [{ do: 'spin', motor: 'M1', speed: '천천히', duration_ms: 1000 }],
+      intro: '모터 1을 느리게 돌려볼게요.',
+      steps: [{ do: 'spin', motor: 'M1', speed: '느리게', duration_ms: 1000 }],
     },
   },
   {

@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────
 export type MotorId = 'M1' | 'M2' | 'M3' | 'M4';
 export type ServoId = 'SA' | 'SB';
-export type SpeedLabel = '천천히' | '보통' | '빠르게';
+export type SpeedLabel = '아주 느리게' | '느리게' | '보통' | '빠르게' | '아주 빠르게';
 export type Direction = 'forward' | 'reverse';
 
 // ─────────────────────────────────────────────────────────────
@@ -215,7 +215,13 @@ export class DslValidationError extends Error {
   }
 }
 
-const SPEED_LABELS: SpeedLabel[] = ['천천히', '보통', '빠르게'];
+// 5/11 PM: 학생 자연어 "아주 느리게/더 느리게" 단계별 적용을 위해 5단계로 확장.
+// 기존 3단계 "천천히/보통/빠르게" 와 호환: AI 가 "천천히"→"느리게" 로 매핑하도록 systemPrompt 에 가이드.
+const SPEED_LABELS: SpeedLabel[] = ['아주 느리게', '느리게', '보통', '빠르게', '아주 빠르게'];
+// 옛 응답 호환 — 기존 customSkill program 에 들어 있을 수 있는 라벨 자동 매핑
+const LEGACY_SPEED_ALIAS: Record<string, SpeedLabel> = {
+  '천천히': '느리게',
+};
 const MOTOR_IDS: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
 const SERVO_IDS: ServoId[] = ['SA', 'SB'];
 
@@ -233,6 +239,7 @@ function validateStep(step: Step, path: string): void {
   switch (step.do) {
     case 'spin':
       if (!MOTOR_IDS.includes(step.motor)) throw new DslValidationError(`${path}.motor`, `잘못된 모터: ${step.motor}`);
+      if (LEGACY_SPEED_ALIAS[step.speed as string]) step.speed = LEGACY_SPEED_ALIAS[step.speed as string];
       if (!SPEED_LABELS.includes(step.speed)) throw new DslValidationError(`${path}.speed`, `잘못된 속도: ${step.speed}`);
       if (step.direction && step.direction !== 'forward' && step.direction !== 'reverse')
         throw new DslValidationError(`${path}.direction`, `잘못된 방향: ${step.direction}`);
@@ -241,6 +248,7 @@ function validateStep(step: Step, path: string): void {
     case 'drive':
       if (!['forward','backward','turn_left','turn_right'].includes(step.heading))
         throw new DslValidationError(`${path}.heading`, `잘못된 heading: ${step.heading}`);
+      if (LEGACY_SPEED_ALIAS[step.speed as string]) step.speed = LEGACY_SPEED_ALIAS[step.speed as string];
       if (!SPEED_LABELS.includes(step.speed)) throw new DslValidationError(`${path}.speed`, `잘못된 속도`);
       if (step.duration_ms !== undefined) assertInRange(`${path}.duration_ms`, step.duration_ms, 1, 30000);
       return;
@@ -254,6 +262,7 @@ function validateStep(step: Step, path: string): void {
       if (step.step !== undefined) assertInRange(`${path}.step`, step.step, -12, 12);
       return;
     case 'speed':
+      if (LEGACY_SPEED_ALIAS[step.level as string]) step.level = LEGACY_SPEED_ALIAS[step.level as string];
       if (!SPEED_LABELS.includes(step.level)) throw new DslValidationError(`${path}.level`, `잘못된 level`);
       return;
     case 'stop':
