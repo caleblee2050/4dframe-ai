@@ -43,6 +43,9 @@ export interface CustomSkill {
 
 interface CustomSkillsState {
   skills: CustomSkill[];
+  // 코드에 박힌 built-in 스킬 (viking_swing 등) 중 사용자가 쉬운 모드에서 숨긴 ID 들.
+  // DB hidden_builtin 테이블과 동기화. customSkill.simpleHidden 과 같은 역할, built-in 용.
+  hiddenBuiltinIds: string[];
   loaded: boolean;          // 서버에서 한 번 fetch 했는지
   loading: boolean;
   error: string | null;
@@ -50,6 +53,7 @@ interface CustomSkillsState {
   add: (s: Omit<CustomSkill, 'id' | 'createdAt'>) => Promise<CustomSkill | null>;
   remove: (id: string) => Promise<void>;
   toggleSimpleHidden: (id: string) => Promise<void>;
+  toggleBuiltinHidden: (builtinId: string) => Promise<void>;
   clear: () => void;
 }
 
@@ -80,6 +84,7 @@ function fromServer(s: ServerSkill): CustomSkill {
 
 export const useCustomSkillsStore = create<CustomSkillsState>()((set, get) => ({
   skills: [],
+  hiddenBuiltinIds: [],
   loaded: false,
   loading: false,
   error: null,
@@ -90,8 +95,13 @@ export const useCustomSkillsStore = create<CustomSkillsState>()((set, get) => ({
     try {
       const res = await fetch('/api/skills');
       if (!res.ok) throw new Error(`fetch ${res.status}`);
-      const data = await res.json() as { skills: ServerSkill[] };
-      set({ skills: data.skills.map(fromServer), loaded: true, loading: false });
+      const data = await res.json() as { skills: ServerSkill[]; hiddenBuiltinIds?: string[] };
+      set({
+        skills: data.skills.map(fromServer),
+        hiddenBuiltinIds: data.hiddenBuiltinIds ?? [],
+        loaded: true,
+        loading: false,
+      });
     } catch (e) {
       set({ error: e instanceof Error ? e.message : String(e), loading: false });
     }
@@ -164,7 +174,28 @@ export const useCustomSkillsStore = create<CustomSkillsState>()((set, get) => ({
     }
   },
 
-  clear: () => set({ skills: [] }),
+  toggleBuiltinHidden: async (builtinId) => {
+    const current = get().hiddenBuiltinIds;
+    const isHidden = current.includes(builtinId);
+    const next = isHidden ? current.filter((x) => x !== builtinId) : [...current, builtinId];
+    // 낙관적 업데이트
+    set({ hiddenBuiltinIds: next });
+    try {
+      const res = isHidden
+        ? await fetch(`/api/builtin-hidden/${encodeURIComponent(builtinId)}`, { method: 'DELETE' })
+        : await fetch('/api/builtin-hidden', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: builtinId }),
+          });
+      if (!res.ok) throw new Error(`builtin-hidden ${res.status}`);
+    } catch (e) {
+      // 롤백
+      set({ hiddenBuiltinIds: current, error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  clear: () => set({ skills: [], hiddenBuiltinIds: [] }),
 }));
 
 export function customSkillsForArtwork(artwork: Artwork | undefined): CustomSkill[] {

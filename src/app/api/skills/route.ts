@@ -50,15 +50,19 @@ export async function GET(req: Request) {
     const artwork = url.searchParams.get('artwork');
 
     const db = getDb();
-    const rs = artwork
-      ? await db.execute({
-          sql: 'SELECT id, artwork, label, emoji, description, program_json, created_at, simple_hidden FROM skills WHERE artwork = ? ORDER BY created_at DESC',
-          args: [artwork],
-        })
-      : await db.execute('SELECT id, artwork, label, emoji, description, program_json, created_at, simple_hidden FROM skills ORDER BY created_at DESC');
+    const [skillsRs, hiddenRs] = await Promise.all([
+      artwork
+        ? db.execute({
+            sql: 'SELECT id, artwork, label, emoji, description, program_json, created_at, simple_hidden FROM skills WHERE artwork = ? ORDER BY created_at DESC',
+            args: [artwork],
+          })
+        : db.execute('SELECT id, artwork, label, emoji, description, program_json, created_at, simple_hidden FROM skills ORDER BY created_at DESC'),
+      db.execute('SELECT builtin_id FROM hidden_builtin'),
+    ]);
 
-    const skills = rs.rows.map((r) => rowToSkill(r as unknown as SkillRow));
-    return Response.json({ skills });
+    const skills = skillsRs.rows.map((r) => rowToSkill(r as unknown as SkillRow));
+    const hiddenBuiltinIds = hiddenRs.rows.map((r) => r.builtin_id as string);
+    return Response.json({ skills, hiddenBuiltinIds });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error('[skills GET]', msg);

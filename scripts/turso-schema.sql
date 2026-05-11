@@ -15,3 +15,10 @@ CREATE TABLE IF NOT EXISTS skills (
 
 CREATE INDEX IF NOT EXISTS idx_skills_artwork ON skills(artwork);
 CREATE INDEX IF NOT EXISTS idx_skills_created_at ON skills(created_at DESC);
+
+-- built-in 스킬 (코드에 박힌 viking_swing 등) 의 hidden 플래그.
+-- 쉬운 모드에서 ✕ 로 숨겨도 영구 삭제는 아니고, 설정에서 다시 보이게 가능.
+CREATE TABLE IF NOT EXISTS hidden_builtin (
+  builtin_id TEXT PRIMARY KEY,
+  hidden_at INTEGER NOT NULL
+);

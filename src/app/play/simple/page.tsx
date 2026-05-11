@@ -229,10 +229,12 @@ export default function SimplePlayPage() {
   // 쉬운 모드 스킬 = 어른이 고급 모드에서 등록/삭제한 customSkills + built-in.
   // customSkills 우선 (어른 의도) → 부족하면 built-in 채움. 최대 3개 슬롯.
   // simpleHidden=true 인 customSkill 은 노출 X — 설정 모달에서 토글.
-  // 고급 모드에서 ✕ 삭제하면 쉬운 모드에서도 즉시 사라짐 (zustand 공유).
+  // built-in 도 hiddenBuiltinIds 에 있으면 노출 X — 설정 모달에서 토글.
+  const hiddenBuiltinSet = new Set(customSkillsStore.hiddenBuiltinIds);
   const customs = customSkillsStore.skills.filter((s) => s.artwork === artwork && !s.simpleHidden);
-  const allSkills: (Skill | CustomSkill)[] = [...customs, ...builtIn].slice(0, 3);
-  // 설정 모달의 "내 스킬 관리" 용 — hidden 포함 전체 list
+  const visibleBuiltIn = builtIn.filter((s) => !hiddenBuiltinSet.has(s.id));
+  const allSkills: (Skill | CustomSkill)[] = [...customs, ...visibleBuiltIn].slice(0, 3);
+  // 설정 모달의 "내 스킬 관리" 용 — hidden 포함 전체 list (custom + built-in)
   const allCustomsForArtwork = customSkillsStore.skills.filter((s) => s.artwork === artwork);
 
   // === Connect ===
@@ -596,16 +598,41 @@ export default function SimplePlayPage() {
                 const translated = isBuiltIn ? t(dictKey) : skill.label;
                 const display = translated === dictKey ? skill.label : translated;
                 return (
-                  <button
-                    key={skill.id}
-                    className="tg-skill-btn"
-                    onClick={() => onRunSkill(skill)}
-                    disabled={!isConnected || isExecuting}
-                    style={{ background: SKILL_BG[i] ?? C.mint }}
-                  >
-                    <span className="tg-skill-index">{i + 1}</span>
-                    <span style={{ flex: 1 }}>{display}</span>
-                  </button>
+                  <div key={skill.id} style={{ position: 'relative' }}>
+                    <button
+                      className="tg-skill-btn"
+                      onClick={() => onRunSkill(skill)}
+                      disabled={!isConnected || isExecuting}
+                      style={{ background: SKILL_BG[i] ?? C.mint, width: '100%' }}
+                    >
+                      <span className="tg-skill-index">{i + 1}</span>
+                      <span style={{ flex: 1 }}>{display}</span>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (isBuiltIn) {
+                          void customSkillsStore.toggleBuiltinHidden(skill.id);
+                        } else {
+                          void customSkillsStore.toggleSimpleHidden(skill.id);
+                        }
+                      }}
+                      title={t('skills.hide')}
+                      aria-label={t('skills.hide')}
+                      style={{
+                        position: 'absolute', top: 6, right: 8,
+                        width: 22, height: 22, borderRadius: '50%',
+                        background: '#fff', color: C.textDark,
+                        border: `2px solid ${C.textDark}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 12, fontWeight: 900, cursor: 'pointer',
+                        padding: 0, lineHeight: 1,
+                        fontFamily: 'inherit',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 );
               })
             )}
@@ -1033,7 +1060,7 @@ export default function SimplePlayPage() {
               </div>
             </div>
 
-            {/* 💖 내 스킬 관리 — 작품별로 노출/숨김/삭제 */}
+            {/* 💖 내 스킬 관리 — 작품별로 노출/숨김/삭제 (custom + built-in 통합 list) */}
             <div>
               <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4, color: C.textDark }}>
                 {t('settings.mySkills')}
@@ -1041,35 +1068,65 @@ export default function SimplePlayPage() {
               <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 10 }}>
                 {t('settings.mySkills.desc')}
               </div>
-              {allCustomsForArtwork.length === 0 ? (
-                <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic', padding: '10px 12px', background: '#fff', border: `2px dashed ${C.textDark}`, borderRadius: 10 }}>
-                  {t('settings.mySkills.empty')}
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {(() => {
-                    const visibleCount = allCustomsForArtwork.filter((s) => !s.simpleHidden).length;
-                    return allCustomsForArtwork.map((s) => {
-                      const hidden = !!s.simpleHidden;
-                      // 노출 3개 한도 초과 시 추가 노출 방지 안내
+              {(() => {
+                // 통합 list — custom 먼저 (사용자 우선), 그 다음 built-in
+                type ManageRow =
+                  | { kind: 'custom'; skill: CustomSkill; hidden: boolean }
+                  | { kind: 'builtin'; skill: Skill; hidden: boolean };
+                const customRows: ManageRow[] = allCustomsForArtwork.map((s) => ({
+                  kind: 'custom' as const, skill: s, hidden: !!s.simpleHidden,
+                }));
+                const builtinRows: ManageRow[] = builtIn.map((s) => ({
+                  kind: 'builtin' as const, skill: s, hidden: hiddenBuiltinSet.has(s.id),
+                }));
+                const rows: ManageRow[] = [...customRows, ...builtinRows];
+                if (rows.length === 0) {
+                  return (
+                    <div style={{ fontSize: 12, color: C.textMuted, fontStyle: 'italic', padding: '10px 12px', background: '#fff', border: `2px dashed ${C.textDark}`, borderRadius: 10 }}>
+                      {t('settings.mySkills.empty')}
+                    </div>
+                  );
+                }
+                const visibleCount = rows.filter((r) => !r.hidden).length;
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {rows.map((r) => {
+                      const id = r.skill.id;
+                      const hidden = r.hidden;
                       const cannotShow = hidden && visibleCount >= 3;
+                      const isBuiltIn = r.kind === 'builtin';
+                      const dictKey = `skill.${id}`;
+                      const builtinTranslated = isBuiltIn ? t(dictKey) : '';
+                      const label = isBuiltIn
+                        ? (builtinTranslated === dictKey ? (r.skill as Skill).label : builtinTranslated)
+                        : (r.skill as CustomSkill).label;
+                      const emoji = isBuiltIn ? (r.skill as Skill).emoji : (r.skill as CustomSkill).emoji;
                       return (
-                        <div key={s.id} style={{
-                          background: hidden ? C.mainBg : C.pink,
+                        <div key={id} style={{
+                          background: hidden ? C.mainBg : (isBuiltIn ? C.mint : C.pink),
                           border: `2.5px solid ${C.textDark}`, borderRadius: 12,
                           padding: '8px 12px',
                           display: 'flex', alignItems: 'center', gap: 10,
                           opacity: hidden ? 0.65 : 1,
                         }}>
-                          <span style={{ fontSize: 20 }}>{s.emoji}</span>
-                          <span style={{ flex: 1, fontSize: 14, fontWeight: 800, color: C.textDark }}>{s.label}</span>
+                          <span style={{ fontSize: 20 }}>{emoji}</span>
+                          <span style={{ flex: 1, fontSize: 14, fontWeight: 800, color: C.textDark }}>{label}</span>
+                          {isBuiltIn && (
+                            <span style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, padding: '2px 6px', background: '#fff', borderRadius: 6, border: `1.5px solid ${C.textDark}` }}>
+                              {t('settings.mySkills.builtinBadge')}
+                            </span>
+                          )}
                           <button
                             onClick={() => {
                               if (cannotShow) {
                                 alert('쉬운 모드 칩은 최대 3개. 다른 스킬을 숨김 처리 후 다시 시도하세요.');
                                 return;
                               }
-                              customSkillsStore.toggleSimpleHidden(s.id);
+                              if (isBuiltIn) {
+                                void customSkillsStore.toggleBuiltinHidden(id);
+                              } else {
+                                void customSkillsStore.toggleSimpleHidden(id);
+                              }
                             }}
                             title={hidden ? t('settings.mySkills.visible') : t('settings.mySkills.hidden')}
                             style={{
@@ -1083,28 +1140,30 @@ export default function SimplePlayPage() {
                           >
                             {hidden ? '🙈' : '⭐'}
                           </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(`"${s.emoji} ${s.label}" — ${t('settings.mySkills.deleteConfirm')}`)) {
-                                customSkillsStore.remove(s.id);
-                              }
-                            }}
-                            title={t('settings.mySkills.delete')}
-                            style={{
-                              fontFamily: 'inherit', cursor: 'pointer',
-                              background: '#fff', color: C.textDark,
-                              border: `2px solid ${C.textDark}`, borderRadius: 8,
-                              padding: '4px 8px', fontSize: 13,
-                            }}
-                          >
-                            🗑
-                          </button>
+                          {!isBuiltIn && (
+                            <button
+                              onClick={() => {
+                                if (confirm(`"${emoji} ${label}" — ${t('settings.mySkills.deleteConfirm')}`)) {
+                                  void customSkillsStore.remove(id);
+                                }
+                              }}
+                              title={t('settings.mySkills.delete')}
+                              style={{
+                                fontFamily: 'inherit', cursor: 'pointer',
+                                background: '#fff', color: C.textDark,
+                                border: `2px solid ${C.textDark}`, borderRadius: 8,
+                                padding: '4px 8px', fontSize: 13,
+                              }}
+                            >
+                              🗑
+                            </button>
+                          )}
                         </div>
                       );
-                    });
-                  })()}
-                </div>
-              )}
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
