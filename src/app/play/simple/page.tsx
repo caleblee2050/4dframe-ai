@@ -179,7 +179,7 @@ export default function SimplePlayPage() {
   useEffect(() => {
     if (artwork !== 'car_4wd' || !isConnectedEarly) return;
     const keys = new Set<string>();
-    // 9V 배터리 있음 → V2 / 없음 → V3. 위치값 변속은 조이스틱 UI 만.
+    // 직진/후진: 9V 있으면 V2, 없으면 V3. 좌/우 단독 (제자리 회전) 은 V5 boost (4WD 토크).
     const update = () => {
       const ax = (keys.has('ArrowRight') ? 1 : 0) + (keys.has('ArrowLeft') ? -1 : 0);
       const ay = (keys.has('ArrowDown') ? 1 : 0) + (keys.has('ArrowUp') ? -1 : 0);
@@ -187,7 +187,8 @@ export default function SimplePlayPage() {
       if (len === 0) onJoystickMove(0, 0, 0);
       else {
         const has9V = useCalibrationStore.getState().current.has9VBattery;
-        const level = has9V ? 2 : 3;
+        const pureTurn = ay === 0 && ax !== 0;
+        const level = pureTurn ? 5 : (has9V ? 2 : 3);
         const mag = level / 9;
         onJoystickMove(ax / len * mag, ay / len * mag, mag);
       }

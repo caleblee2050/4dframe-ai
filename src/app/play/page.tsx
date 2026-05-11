@@ -864,10 +864,11 @@ export default function PlayPage() {
       const len = Math.sqrt(ax * ax + ay * ay);
       if (len === 0) onJoystickMove(0, 0, 0);
       else {
-        // 9V 배터리 있음 → V2 / 없음 → V3 (USB 5V 만이라 한 단계 위 필요).
-        // mag = level / 9 가 ceil(mag*9) = level 을 보장.
+        // 기본 속도 — 직진/후진: 9V 있으면 V2, 없으면 V3.
+        // 좌/우 단독 (제자리 회전) 은 4WD 토크 필요 — V5 boost.
         const has9V = useCalibrationStore.getState().current.has9VBattery;
-        const level = has9V ? 2 : 3;
+        const pureTurn = ay === 0 && ax !== 0;
+        const level = pureTurn ? 5 : (has9V ? 2 : 3);
         const mag = level / 9;
         onJoystickMove(ax / len * mag, ay / len * mag, mag);
       }
