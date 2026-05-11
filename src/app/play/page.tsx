@@ -801,7 +801,10 @@ export default function PlayPage() {
 
     // 같은 명령 반복 송신 방지 (시리얼 포화 + 펌웨어 race 회피)
     const sig = `${lLevel}.${lDir}|${rLevel}.${rDir}`;
-    if (lastJoyRef.current.signature === sig) return;
+    // 같은 명령 반복 송신 방지 (시리얼 포화 회피). 단 500ms 이상 지났으면 keepalive 로 재송신
+    // — BLE 무선 환경에서 펌웨어가 "마지막 수신 1.5초 초과 → 끊김 추정 → stopAll" watchdog
+    // 작동시키는 데 필요한 활성 byte 확보.
+    if (lastJoyRef.current.signature === sig && now - lastJoyRef.current.t < 500) return;
     lastJoyRef.current = { t: now, signature: sig };
 
     const cmds: string[] = [];

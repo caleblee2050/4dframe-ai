@@ -10,7 +10,7 @@
 // 학생이 새 보드를 처음 꽂으면 한 번 사용자 제스처로 requestPort 호출 → 권한 영속.
 
 import { create } from 'zustand';
-import { FIRMWARE } from '@/lib/commands/commands';
+import { FIRMWARE, GLOBAL } from '@/lib/commands/commands';
 import './types';
 
 export type ConnectionStatus = 'idle' | 'requesting' | 'opening' | 'connected' | 'closing' | 'error';
@@ -272,6 +272,15 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
   },
 
   disconnect: async () => {
+    // ⚠ 끊기 전 모터 강제 정지 — 안 보내면 보드가 마지막 명령 (예: 'W' 전진) 그대로 유지해서
+    // 모터가 계속 돌아감. USB 면 _writer, BLE 면 bleSend 로 송신.
+    try {
+      if (_writer) {
+        await _writer.write(encoder.encode(GLOBAL.stopAll));
+      } else if (_bleChar) {
+        await bleSend(GLOBAL.stopAll);
+      }
+    } catch {}
     set({ status: 'closing' });
     await safeCleanup();
     await safeBleCleanup();

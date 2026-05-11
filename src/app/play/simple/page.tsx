@@ -112,7 +112,9 @@ export default function SimplePlayPage() {
     const lLevel = lDir !== 0 ? speedLevel : 0;
     const rLevel = rDir !== 0 ? speedLevel : 0;
     const sig = `${lLevel}.${lDir}|${rLevel}.${rDir}`;
-    if (lastJoyRef.current.signature === sig) return;
+    // 같은 명령은 throttle 하되 500ms 마다 keepalive 재송신 — BLE 신호 끊김 시 펌웨어
+    // watchdog (1.5초 무수신 → stopAll) 가 발동되게.
+    if (lastJoyRef.current.signature === sig && now - lastJoyRef.current.t < 500) return;
     lastJoyRef.current = { t: now, signature: sig };
     const cmds: string[] = [];
     // V 명령은 lastBoot 무관 무조건 송신 (v1.0 펌웨어는 V 무시 — 안전). 같은 level dedupe.
