@@ -691,6 +691,20 @@ export default function SimplePlayPage() {
           <div className="tg-logo-subtitle">{t('thinkgen.subtitle')}</div>
         </div>
 
+        {/* 메인(카드 고르기)으로 돌아가는 작은 아이콘 버튼 — 사이드바 우상단 고정 */}
+        <button
+          type="button"
+          className="tg-back-to-main"
+          onClick={() => setArtwork(null)}
+          title={t('landing.backToMain')}
+          aria-label={t('landing.backToMain')}
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 11.5 L12 4 L21 11.5" />
+            <path d="M5.5 10 V20 H18.5 V10" />
+          </svg>
+        </button>
+
         {/* 나만의 AI 스킬 — 항상 3칸 (비어있어도 표시), 연결/끊김 segmented 토글 */}
         <section>
           <div className="tg-sidebar-header">

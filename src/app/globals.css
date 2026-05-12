@@ -115,6 +115,36 @@ body {
   object-fit: contain;
 }
 
+.tg-back-to-main {
+  position: absolute;
+  top: clamp(14px, 1.2vw, 22px);
+  right: clamp(14px, 1.2vw, 22px);
+  width: clamp(38px, 2.6vw, 46px);
+  height: clamp(38px, 2.6vw, 46px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: var(--tg-mainbg, #FFF3DF);
+  color: #6ab5b8;
+  border: 2px solid rgba(106, 181, 184, 0.55);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 2px 0 rgba(106, 181, 184, 0.25);
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+  z-index: 2;
+}
+
+.tg-back-to-main:hover {
+  background: #fff;
+  color: #2E6E6B;
+}
+
+.tg-back-to-main:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 0 rgba(106, 181, 184, 0.25);
+}
+
 .tg-section-title {
   margin: 0 0 14px;
   color: var(--tg-side-text, #2E6E6B);
