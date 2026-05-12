@@ -180,6 +180,12 @@ export interface TuneSyncStep extends BaseStep {
   // true 면 마지막 사이클 시작이 음악 끝을 넘기면 그 사이클 생략. 기본 true.
   // false 면 마지막 사이클 끝까지 실행 (살짝 오버슈팅 허용).
   trim_to_music?: boolean;
+  // 🎼 motion 을 한 번만 통째로 실행할지 (false), 반복 사이클로 돌릴지 (true).
+  // - 기본 true: motion 이 짧은 반복 단위 (예: 좌→우 흔들기 800ms 한 사이클). 음악 끝까지 반복.
+  // - false: motion 이 음악 전체 길이의 narrative (예: 점점 빨라졌다 다시 느려짐). 한 번만 실행.
+  //   AI 는 motion 의 duration_ms 합이 음악 길이와 비슷하도록 만들어야 함 — 인터프리터가
+  //   둘 중 더 긴 쪽까지 기다린 후 stopAll.
+  loop_motion?: boolean;
   // 📏 거리 반응형 tempo — 거리 센서값 → tempo 매핑.
   // 설정 시 tune 이 자동 loop 됨 (한 곡 끝나면 새 tempo 로 재생). 거리가 stop_cm_below 이하
   // 가 되거나 max_loops 도달 또는 timeout_ms 지나면 종료.

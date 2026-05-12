@@ -400,8 +400,11 @@ function tempoFromDistance(
   return dt.near_tempo + (dt.far_tempo - dt.near_tempo) * t;
 }
 
-// tune_sync 한 곡 실행 — 음악 시작, motion 사이클 반복, 끝나면 stop.
-// 외부 abort / 외부 deadline 도달 시 중단. 반환: 자연 종료 여부 (true=음악 끝까지 / false=중단됨)
+// tune_sync 한 곡 실행 — 음악 시작, motion 동기, 끝나면 호출자가 stop.
+// loop_motion 에 따라 모드 분기:
+//   - true (기본): motion 을 짧은 사이클로 반복하다 음악 끝.
+//   - false: motion 을 한 번 통째로 실행 + 음악 동시 진행. 둘 중 늦게 끝나는 쪽까지 대기.
+// 외부 abort / 외부 deadline 도달 시 중단. 반환: 자연 종료 여부.
 async function playTuneOnce(
   step: TuneSyncStep,
   ctx: StepCtx,
@@ -412,18 +415,38 @@ async function playTuneOnce(
   // motion duration_ms 도 tempo 비율로 스케일 — tempo 빠르면 모션도 빠르게.
   const scaledMotion = scaleMotionByTempo(step.motion, effectiveTempo);
   const trim = step.trim_to_music ?? true;
-  const cycleMs = estimateMotionCycleMs(scaledMotion);
+  const loopMotion = step.loop_motion ?? true;
+  const motionTotalMs = estimateMotionCycleMs(scaledMotion);
 
   ctx.emit({ type: 'play_tune', tune: step.tune, tempo: effectiveTempo, await_melody: false, custom: step.custom });
   const startedAt = Date.now();
-  const innerDeadline = Math.min(startedAt + totalMs, outerDeadline);
 
+  if (!loopMotion) {
+    // 🎼 one-shot: motion 한 번만 통째로 실행 (속도 arc / 한 번 뿐인 narrative).
+    // 음악과 motion 중 늦게 끝나는 쪽까지 대기 — 둘이 비슷하게 끝나야 자연스러움.
+    const targetMs = Math.max(totalMs, motionTotalMs);
+    const innerDeadline = Math.min(startedAt + targetMs, outerDeadline);
+    await runMotionInline(scaledMotion, ctx, innerDeadline);
+    if (ctx.signal?.aborted) return false;
+    // motion 끝났으면 모터는 마지막 step 의 direction 으로 계속 회전 중. stopAll 송신해서 멈춤.
+    await ctx.send(GLOBAL.stopAll);
+    // 음악이 더 길면 그 끝까지 대기 (모터는 멈춘 상태로 음악만 흐름)
+    const remaining = totalMs - (Date.now() - startedAt);
+    if (remaining > 0) {
+      const clamped = Math.min(remaining, Math.max(0, outerDeadline - Date.now()));
+      if (clamped > 0) await ctx.delay(clamped);
+    }
+    return true;
+  }
+
+  // 🔁 loop mode (기본): motion 을 짧은 사이클로 반복.
+  const innerDeadline = Math.min(startedAt + totalMs, outerDeadline);
   while (true) {
     if (ctx.signal?.aborted) return false;
     if (Date.now() >= outerDeadline) return false;
     const elapsed = Date.now() - startedAt;
     if (elapsed >= totalMs) break;
-    if (trim && cycleMs > 0 && elapsed + cycleMs > totalMs + 200) break;
+    if (trim && motionTotalMs > 0 && elapsed + motionTotalMs > totalMs + 200) break;
     await runMotionInline(scaledMotion, ctx, innerDeadline);
   }
 
@@ -485,7 +508,11 @@ async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, _path: string) {
   // 일반 모드 — 한 곡 + motion 동기 + 끝나면 stop.
   const tempo = step.tempo ?? 1.0;
   const totalMs = melodyDurationMs(step.tune, tempo, step.custom);
-  await playTuneOnce(step, ctx, tempo, Date.now() + totalMs + 2000);
+  // loop_motion=false 일 때 motion 이 음악보다 길 수도 있으니 deadline 을 충분히 잡음.
+  const scaledMotion = scaleMotionByTempo(step.motion, tempo);
+  const motionTotalMs = estimateMotionCycleMs(scaledMotion);
+  const targetMs = Math.max(totalMs, motionTotalMs);
+  await playTuneOnce(step, ctx, tempo, Date.now() + targetMs + 2000);
   if (ctx.signal?.aborted) {
     try { stopMelody(); } catch {}
   }
