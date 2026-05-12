@@ -1,9 +1,120 @@
 # 4DFrame AI — Walkthrough
 
-> 마지막 업데이트: 2026-05-12 (PM — BLE 활성화 + 조이스틱 안정화 + 펌웨어 v1.4.1)
+> 마지막 업데이트: 2026-05-13 (음악-모터 싱크 완성 + 신규 카드 디자인 + 메인 복귀 + Stop 토글)
 > **다음 세션 시작 시 이 문서만 읽고 즉시 작업 진입 가능**
 > 페이지 안내: [docs/PAGES.md](docs/PAGES.md)
 > 제품 비전: [docs/VISION.md](docs/VISION.md)
+
+---
+
+## ✅ 5/13 — 음악-모터 싱크 완성 + UX 개선 (시연회 준비)
+
+5/14 오전 시연회. 12개 커밋 (d9e6d59 ~ 91eb755). 모두 main 푸쉬 완료.
+
+### A. 신규 스킬카드 디자인
+- ThinkGen 디자이너 3종 신규 카드 적용 (1080×1491 고해상도):
+  - `card-frame-car.png` ← 스피드 레이서 (자동차)
+  - `card-frame-crocodile.png` ← 아앙! 악어
+  - `card-frame-ballerina.png` ← 마법~회전그네 (회전그네 작품용)
+- 원본: `/Users/caleb/Downloads/Skill_Cards/`
+
+### B. 메인 복귀 버튼 (사이드바 우상단)
+- `/play/simple` 카드 진입 후 좌측 사이드바 우상단 작은 홈 아이콘.
+- 위치 absolute, 크림 배경 + 티얼 테두리/아이콘 (기존 close/settings 와 톤 통일).
+- 기존 카드 썸네일 클릭 경로 유지 (보조 path).
+- i18n 키: `landing.backToMain` (ko/en/mn).
+
+### C. Play ↔ Stop 토글
+- `isExecuting=true` 시 카드 P (Play) 버튼이 **빨간 펄스 S (Stop)** 로 변신.
+- 클릭 시 `abortRef.abort()` + `stopMelody()` + 즉시 `stopAll` 송신 (3중 안전망).
+- 학생이 동작 중간에 강제로 끊는 명확한 시각 단서.
+- i18n 키: `card.stop` (ko/en/mn).
+
+### D. ⭐ tune_sync — 음악-모터 자동 싱크 primitive
+가장 큰 작업. 학생이 "음악에 맞춰서" 라고 하면 AI 가 매번 `play_tune + repeat × N` 으로 추정 → 음악 끝나도 모터 한참 더 회전. 근본 재설계:
+
+**새 DSL step**: [src/lib/dsl/schema.ts](src/lib/dsl/schema.ts)
+```ts
+{ do: 'tune_sync',
+  tune: TuneId,
+  custom?: CustomTune,
+  tempo?: number,
+  motion: Step[],
+  loop_motion?: boolean,       // 기본 true. false = motion 한 번만 통째로 실행.
+  trim_to_music?: boolean,
+  speed_arc?: {                // ★ 속도 곡선 자동 생성 (AI 부담 최소화)
+    motor, direction?, curve: 'crescendo'|'decrescendo'|'arc',
+    min_speed?, max_speed?, duration_ms?
+  },
+  distance_tempo?: {           // 🦈 거리 반응형 음악 (죠스 다가오기)
+    near_cm, far_cm, near_tempo, far_tempo,
+    stop_cm_below?, max_loops?, timeout_ms?
+  }
+}
+```
+
+**인터프리터 핵심** ([src/lib/dsl/interpreter.ts](src/lib/dsl/interpreter.ts)):
+- `melodyDurationMs()` 로 음악 길이 정확 계산 + motion 사이클 동기 + 끝나면 자동 stopAll.
+- `runMotionInline()` — 사이클 사이 stopAll 안 끼고 direction byte 만 전환 → 부드러운 모션 (viking_school_bell 패턴).
+- `generateSpeedArcMotion()` — speed_arc 받으면 9단계(arc) / 5단계(crescendo/decrescendo) spin 시퀀스 자동 생성.
+- **음악 자동 stretch**: speed_arc.duration_ms 설정 + custom tune 이면, tempo + beats scale 자동 조정해서 음악-모터 길이 일치. AI 가 beats 합 정확히 계산 안 해도 OK.
+- distance_tempo: tune 자동 loop, 매 loop 시작 시 거리값 → tempo 선형 보간.
+- `scaleMotionByTempo()` — tempo 변화 시 motion duration 도 같은 비율로 자동 조정.
+
+### E. 🐛 isV13Plus 기본값 false → true (핵심 버그 fix)
+**최대 발견**. BOOT 라인 도착 전에 program 실행 시 `lastBoot=null` → `isV13Plus(undefined)=false` → V 명령(V1~V9) 전부 skip → 모터가 마지막 V (보통 V3) 로 고정. speed_arc 가 9단계 V 변화 만들어도 보드에 안 도달. 콘솔 로그 확인으로 잡음:
+- 사용자 BLE 로그: `1, 1, 0, 0` (V 명령 0개)
+- 모든 사용자 보드 v1.4.1 (BLE 미지원=v1.0 은 USB 만 가능 + BOOT 즉시 수신).
+- → 미감지 시 `true` 가 안전. [src/lib/commands/commands.ts:isV13Plus](src/lib/commands/commands.ts)
+
+### F. 연결 끊김 시 완전 정지
+- `onConnectClick` 끊기 직전 `abortRef.abort()` + `stopMelody()` + 80ms wait + `disconnect()`.
+- `board.disconnect` 의 stop 페이로드를 `0` → `0V00V00V0` (stop + globalPwm 0) × **5회 × 40ms 간격** 송신.
+- `useEffect(board.status)` — connected 아닌 모든 전환에서 abort + stopMelody. 외부 BLE 끊김 / 보드 OFF / USB 뽑힘 모두 커버.
+- `runProgram` 의 abort/error 경로에 `stopMelody()` 추가.
+- Signal-aware delay — `defaultDelay(ms, signal)` 가 abort 시 즉시 resolve. 800ms 짜리 delay 도중에도 끊김.
+
+### G. 시스템 프롬프트 — 창의적 협력자 자세
+사용자 통찰 반영: "저장된 스킬은 정확하게 구조화 되는 게 맞지만, 대화 중에는 다양한 표현을 이해해야 사고력·응용력·창의력을 키움."
+- 프롬프트 최상단에 "🎨 당신의 정체성 — 명령 파서가 아닌 창의적 협력자" 섹션 신설.
+- 추상적/감정적 표현 해석 예시: "감동적으로" / "신비롭게" / "혼란스럽게" / "기분이 좀 그래" / "뭔가 멋진 거".
+- "더 길게/짧게" 상대 시간 표현 가이드 (×1.5, ×2, ×0.6, ×0.5). "차이를 느낄 만큼" 변화 강조.
+- speed_arc 트리거 키워드: "점점 빨라" / "고조" / "잦아들면서" / "신나는 놀이공원" / 등.
+- distance_tempo 트리거 키워드: "가까이 오면 빨라져" / "죠스가 다가와" / 등.
+- "음악 길이 가이드": 놀이공원 8~12초, 잠깐 3~5초, 긴 여정 12~20초.
+- 음악+모터 예시를 모든 음악 예시의 첫 번째로 재배치 (AI 가 첫 예시를 anchor 로 삼음).
+
+### H. 디버그 로그
+- AI 생성 program 을 `console.log('%c[AI Program]', ..., valid)` 보라색 배지 출력.
+- 모든 `[ble→]` / `[serial→]` / `[disconnect→]` 송신 로그.
+- 학생/사용자가 dev console 열고 실제 흐름 확인 가능 → 향후 디버그 빨라짐.
+
+### I. 모델
+- `anthropic/claude-sonnet-4-6` 그대로 (사용자 결정: Opus 4.7 은 오버페이).
+- 프롬프트 가이드로 충분한 품질 확보.
+
+---
+
+## 🎬 시연회 준비 (5/14 오전)
+
+### 검증할 핵심 시나리오
+1. **카드 진입 + 메인 복귀**: 3개 카드 (자동차/악어/회전그네) 선택 → 좌상단 홈 아이콘으로 돌아가기.
+2. **단순 음악 싱크**: "학교종 노래에 맞춰 흔들어" → 음악-모터 동시 시작/종료.
+3. **속도 arc**: "신나는 놀이공원 회전그네 10초간" → V1→V3→V6→V8→V9→V8→V6→V3→V1 + 음악 자동 stretch.
+4. **상대 표현**: 위 실행 후 "더 길게" → 시간 자동 ×1.5 확장.
+5. **창의적 해석**: "신비롭게 회전" → AI 가 적절한 음악/속도 선택 + `say` 로 의도 공유.
+6. **Stop 토글**: 동작 중 빨간 S 버튼 → 즉시 정지 + 음악 멈춤.
+7. **연결 끊기**: 동작 중 OFF → 모터/음악 즉시 정지.
+8. **악어 거리 반응**: "다가오면 음악 빨라지고 멀어지면 천천히" + 거리센서 ON → 손 이동에 따라 tempo 변화.
+
+### 디버그 시 콘솔 확인 포인트
+- `[AI Program]` 보라색 배지 — AI 출력 JSON. `steps`/`speed_arc`/`tune` 확인.
+- `[ble→] "V1"`, `"V3"` ... — V 명령 송신 여부. 없으면 isV13Plus 의심.
+- `[disconnect→] "0V00V00V0"` — disconnect 시 5회 송신 로그.
+
+### 라이브 URL
+- 학생/교사: https://4dframe-ai.vercel.app/play/simple
+- 자동 배포 (Vercel main 브랜치).
 
 ---
 
