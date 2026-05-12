@@ -62,6 +62,7 @@ export async function runProgram(program: Program, opts: RunOptions = {}): Promi
     for (let i = 0; i < steps.length; i++) {
       if (signal?.aborted) {
         await emit({ type: 'aborted' });
+        try { stopMelody(); } catch {}
         await safeStop(send);
         return;
       }
@@ -76,6 +77,7 @@ export async function runProgram(program: Program, opts: RunOptions = {}): Promi
         }, `${pathPrefix}[${i}]`);
       } catch (e) {
         await emit({ type: 'error', message: e instanceof Error ? e.message : String(e) });
+        try { stopMelody(); } catch {}
         await safeStop(send);
         return;
       }
@@ -331,7 +333,61 @@ function estimateMotionCycleMs(steps: Step[]): number {
   return total;
 }
 
-async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, path: string) {
+// tune_sync 전용 인라인 모션 실행 — 일반 execSpin/execDrive 는 duration_ms 끝에 stopAll 을
+// 자동 송신해서 매 사이클 사이 모터가 멎었다 출발 → 음악과 어긋남 + 진동.
+// 여기서는 stopAll 을 빼고 direction byte 만 흘려서 부드럽게 방향 전환 (viking_school_bell
+// 스킬과 동일한 패턴). 마지막에 단 한 번 stopAll.
+async function runMotionInline(steps: Step[], ctx: StepCtx, deadline: number) {
+  const fw = useBoardStore.getState().lastBoot?.fw;
+  const v13 = isV13Plus(fw);
+  const threshold = useCalibrationStore.getState().current.startThreshold;
+
+  for (const s of steps) {
+    if (ctx.signal?.aborted) return;
+    if (Date.now() >= deadline) return;
+
+    if (s.do === 'spin') {
+      const motorCfg = MOTORS[s.motor];
+      const directionByte = s.direction === 'reverse' ? motorCfg.reverseByte : motorCfg.forwardByte;
+      if (v13) {
+        const level = calibratedPwmLevel(s.motor, s.speed, threshold);
+        await ctx.send(pwmCommand(level));
+      }
+      await ctx.send(directionByte);
+      const dur = s.duration_ms ?? 400;
+      // deadline 까지만 대기 (음악이 먼저 끝나면 즉시 종료)
+      const clamped = Math.min(dur, Math.max(0, deadline - Date.now()));
+      if (clamped > 0) await ctx.delay(clamped);
+      // ⚠ 의도적으로 stopAll 안 보냄 — 다음 step 의 direction byte 가 부드럽게 전환
+    } else if (s.do === 'drive') {
+      if (v13) {
+        const motors: MotorId[] = ['M1', 'M2', 'M3', 'M4'];
+        const maxThreshold = motors.reduce((acc, m) => Math.max(acc, threshold[m]), 0);
+        const level = speedToLevel(s.speed, maxThreshold);
+        await ctx.send(pwmCommand(level));
+      }
+      const headingByte = {
+        forward: GLOBAL.carForward,
+        backward: GLOBAL.carBackward,
+        turn_left: GLOBAL.turnLeft,
+        turn_right: GLOBAL.turnRight,
+      }[s.heading];
+      await ctx.send(headingByte);
+      const dur = s.duration_ms ?? 400;
+      const clamped = Math.min(dur, Math.max(0, deadline - Date.now()));
+      if (clamped > 0) await ctx.delay(clamped);
+    } else if (s.do === 'wait') {
+      const clamped = Math.min(s.ms, Math.max(0, deadline - Date.now()));
+      if (clamped > 0) await ctx.delay(clamped);
+    } else if (s.do === 'servo' || s.do === 'speed' || s.do === 'stop' || s.do === 'say' || s.do === 'play_sound') {
+      // 일반 execute 위임 — 짧고 stop 안 끼는 step 들. await 함.
+      await executeStep(s, ctx, '$tune_sync.motion');
+    }
+    // repeat 등은 motion 안에 잘 안 쓰니 일단 무시 (필요시 추후 확장).
+  }
+}
+
+async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, _path: string) {
   const tempo = step.tempo ?? 1.0;
   const totalMs = melodyDurationMs(step.tune, tempo, step.custom);
   const trim = step.trim_to_music ?? true;
@@ -340,8 +396,8 @@ async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, path: string) {
   // 음악 시작 (fire-and-forget — await 하면 사이클이 못 돈다)
   ctx.emit({ type: 'play_tune', tune: step.tune, tempo, await_melody: false, custom: step.custom });
   const startedAt = Date.now();
+  const deadline = startedAt + totalMs;
 
-  let iter = 0;
   while (true) {
     if (ctx.signal?.aborted) {
       try { stopMelody(); } catch {}
@@ -351,8 +407,8 @@ async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, path: string) {
     const elapsed = Date.now() - startedAt;
     if (elapsed >= totalMs) break;
     // 마지막 사이클 시작이 음악 끝을 너무 넘기면 생략 (음악 끝 = 모터 끝 보장)
-    if (trim && cycleMs > 0 && elapsed + cycleMs > totalMs + 150) break;
-    await ctx.runSubSteps(step.motion, `${path}.motion.iter[${iter++}]`);
+    if (trim && cycleMs > 0 && elapsed + cycleMs > totalMs + 200) break;
+    await runMotionInline(step.motion, ctx, deadline);
   }
 
   // 음악 끝 시점까지 정확히 대기 후 stop — 잔여 모터 회전 차단

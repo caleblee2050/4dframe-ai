@@ -18,7 +18,7 @@ import { runProgram, type InterpreterEvent } from '@/lib/dsl/interpreter';
 import { validateProgram, type Program } from '@/lib/dsl/schema';
 import type { PromptContext } from '@/lib/ai/systemPrompt';
 import { useSoundStore, playEffect, speakText, stripAudioTags, prefetchProgramAudio } from '@/lib/sound/soundManager';
-import { playMelody } from '@/lib/sound/melodySynth';
+import { playMelody, stopMelody } from '@/lib/sound/melodySynth';
 import { GLOBAL, MOTORS } from '@/lib/commands/commands';
 import type { MotorId } from '@/lib/dsl/schema';
 import { useI18nStore } from '@/lib/i18n/store';
@@ -434,15 +434,29 @@ export default function SimplePlayPage() {
   };
 
   // 연결 토글 — 연결됨 상태에서 클릭 = 끊기, 아니면 USB/BLE 선택 모달 열기.
+  // 끊을 때는 진행 중인 AI 프로그램/스킬 즉시 abort + 음악 정지 → 그 다음 board.disconnect()
+  // 가 stopAll×3 송신. 안 그러면 인터프리터가 계속 명령 보내려다 fail 하고 음악만 남는다.
   const onConnectClick = () => {
     if (isConnected) {
-      void board.disconnect();
+      abortRef.current?.abort();
+      try { stopMelody(); } catch {}
+      // 인터프리터의 safeStop 이 stopAll 송신할 짧은 틈
+      setTimeout(() => { void board.disconnect(); }, 80);
     } else if (board.status === 'requesting' || board.status === 'opening') {
       // 진행 중에는 무시
     } else {
       setConnectModalOpen(true);
     }
   };
+
+  // 연결이 외부 요인으로 끊기는 경우 (BLE 신호 끊김, 보드 OFF, USB 뽑힘) — 진행 중인 프로그램
+  // 도 즉시 abort + 음악 정지. 안 그러면 음악만 끝까지 흐르고 다음 연결 때 잔여 동작이 남는다.
+  useEffect(() => {
+    if (board.status !== 'connected' && board.status !== 'opening' && board.status !== 'requesting') {
+      abortRef.current?.abort();
+      try { stopMelody(); } catch {}
+    }
+  }, [board.status]);
 
   // === Mic ===
   const cleanupMic = useCallback(() => {

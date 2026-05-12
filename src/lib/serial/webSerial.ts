@@ -274,13 +274,17 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
   disconnect: async () => {
     // ⚠ 끊기 전 모터 강제 정지 — 안 보내면 보드가 마지막 명령 (예: 'W' 전진) 그대로 유지해서
     // 모터가 계속 돌아감. USB 면 _writer, BLE 면 bleSend 로 송신.
-    try {
-      if (_writer) {
-        await _writer.write(encoder.encode(GLOBAL.stopAll));
-      } else if (_bleChar) {
-        await bleSend(GLOBAL.stopAll);
-      }
-    } catch {}
+    // BLE 는 패킷 손실 가능 → stopAll 3회 중복 + 50ms 간격으로 송신해서 펌웨어 도달 보장.
+    for (let i = 0; i < 3; i++) {
+      try {
+        if (_writer) {
+          await _writer.write(encoder.encode(GLOBAL.stopAll));
+        } else if (_bleChar) {
+          await bleSend(GLOBAL.stopAll);
+        }
+      } catch {}
+      if (i < 2) await new Promise<void>((r) => setTimeout(r, 50));
+    }
     set({ status: 'closing' });
     await safeCleanup();
     await safeBleCleanup();

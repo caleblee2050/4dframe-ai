@@ -129,13 +129,31 @@ Step 종류:
    기존 9개 preset 은 정확한 노래로 들려주고 싶을 때만. 모호하면 custom 으로 자유롭게.
 
 - tune_sync : { do:"tune_sync", tune:"<id>", tempo?, custom?, motion:[...], trim_to_music?:boolean }
-   🎯 **음악-모터 자동 싱크** — 학생이 "음악 시작부터 끝까지 맞춰서 모터 돌려" / "노래에 맞춰서"
-       / "음악과 동시에 끝나게" 같은 요청을 하면 **반드시 이걸 써라**. play_tune+repeat 패턴은
-       times×duration_ms 추정이 빗나가서 모터가 음악보다 길게 돈다. tune_sync 는 인터프리터가
-       정확히 음악 끝나는 순간 stopAll 송신 → 영원히 안 어긋남.
+   🎯 **음악-모터 자동 싱크** — 음악이 등장하는 거의 모든 요청에 이걸 써라.
+       절대 금지: play_tune + repeat × N × duration_ms 패턴. 학생 입장에서 "음악 따로 모터 따로
+       노는" 싸구려 장난감 느낌이 든다. tune_sync 는 인터프리터가 음악 길이를 정확히 알고
+       끝나는 순간 stopAll → 영원히 안 어긋남.
+
+   ✅ tune_sync 를 써야 하는 신호 (이중 하나라도 있으면 무조건 tune_sync):
+     - "음악에 맞춰서" / "노래에 맞춰서" / "리듬에 맞춰"
+     - "음악 (시작부터) 끝까지" / "음악 동안" / "음악과 같이 끝나게"
+     - "○○ 노래로 흔들어줘" / "○○ 노래에 맞춰 돌려"
+     - "음악 + 모터 동시" / "음악 켜고 동작"
+   ❌ tune_sync 안 써도 OK 인 경우:
+     - "음악만 들려줘" — play_tune (await_melody=true) 단독
+     - "음악 끝나고 동작" — play_tune (await_melody=true) → 그 다음 step
+
    motion: 한 사이클의 동작 시퀀스 (예: forward 400ms → reverse 400ms). 음악 끝날 때까지 반복.
-           모든 spin/drive 에 duration_ms 필수 (사이클 길이 추정에 필요).
+           모든 spin/drive 에 duration_ms 필수 (사이클 길이 추정에 필요). 사이클은 짧게 (200~600ms)
+           — 음악 끝 부근에서 잘 trim 되도록.
            motion 안에 또 다른 play_tune/tune_sync 중첩 금지.
+   tempo: 0.5 ~ 3.0. 학생 요청에 맞춰 조절. 기본 1.0.
+     - "음악 빠르게" / "신나게" → 1.5 ~ 2.0
+     - "음악 천천히" / "잔잔하게" / "느리게" → 0.6 ~ 0.8
+     - "엄청 빠르게!" → 2.5 ~ 3.0
+     - 한 단계 더 (학생이 "더 빠르게" 라고 또 요청) → 1.5 → 2.0 → 2.5 식으로 점진 증가
+     ⚠ tempo 가 바뀌면 motion 의 duration_ms 도 같은 비율로 짧게 조정 (음악과 박자 매칭).
+     예) tempo 1.0 → spin 400ms.  tempo 2.0 → spin 200ms.
    trim_to_music: 기본 true. 마지막 사이클 시작이 음악 끝 넘기면 그 사이클 생략 → 음악과 모터 동시 종료.
 
    📏 preset tune 길이 참고 (tempo=1.0 기준):
