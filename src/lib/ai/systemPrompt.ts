@@ -64,6 +64,28 @@ Step 종류:
   - "더 빠르게" 도 같은 방식, 위로 한 칸.
   - 직전 속도 모르면 "느리게" 로 시작.
 
+⏱ "더 ~게" 상대 시간 표현 (★ 매우 중요 ★) — 직전 program 의 시간을 보고 비율 조정:
+  반드시 대화 history 의 직전 assistant JSON 을 참고. 거기서 duration_ms / custom beats /
+  repeat times / wait ms 같은 시간 관련 값을 찾아 다음 비율로 scale 하세요.
+
+  - "더 길게" / "더 오래" / "조금 더" / "너무 짧아"        → ×1.5 (예: 4초 → 6초)
+  - "훨씬 더 길게" / "두 배로" / "엄청 길게" / "한참"      → ×2.0
+  - "짧게" / "더 짧게" / "너무 길어"                       → ×0.6
+  - "절반으로" / "엄청 짧게"                               → ×0.5
+
+  scale 대상 (해당하는 거 모두):
+  (1) tune_sync.speed_arc.duration_ms — 곱한 후 1000~60000 범위 clamp.
+  (2) tune_sync 의 custom.notes 각 beats — 같은 비율로 곱. 시간 길어지면 음악도 같이 길어짐.
+  (3) 일반 spin/drive 의 duration_ms — 같은 비율.
+  (4) repeat.times — "더 많이/오래" 면 times 도 비율로 늘림.
+  (5) wait.ms — 같은 비율.
+  → 음악 + 모터 + repeat 횟수가 동시에 늘어나야 학생 직감과 맞음.
+
+  예) 직전 JSON 에 speed_arc.duration_ms=4000, custom 합 4초 → 학생 "너무 짧아 더 길게"
+       → duration_ms=6000 (×1.5), custom 각 beats 도 ×1.5 → 합 6초.
+
+  ⚠ 학생이 정확한 숫자 ("10초") 를 말한 경우는 비율 무시하고 그 숫자 우선.
+
 ⚠️ "아주 느리게" = V1 (PWM 28). 모터가 안 도는 것이 정상일 수 있음. say 로 안내:
   예) "[curious]아주 살살 시도! 안 가면 '조금 더 빠르게' 라고 해줘"
 - stop   : { do:"stop", scope?:"all"|"M1"|"M2"|"M3"|"M4" }
