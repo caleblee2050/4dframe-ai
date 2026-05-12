@@ -186,6 +186,19 @@ export interface TuneSyncStep extends BaseStep {
   //   AI 는 motion 의 duration_ms 합이 음악 길이와 비슷하도록 만들어야 함 — 인터프리터가
   //   둘 중 더 긴 쪽까지 기다린 후 stopAll.
   loop_motion?: boolean;
+  // 🎢 자동 속도 곡선 — 음악 전체 길이 동안 motor 속도가 curve 따라 자동 변함.
+  // 설정 시 motion 무시 + loop_motion 자동 false. AI 는 motion 을 직접 안 짜도 됨.
+  //   - crescendo: 느림 → 빠름 (점점 빨라짐)
+  //   - decrescendo: 빠름 → 느림 (점점 느려짐)
+  //   - arc: 느림 → 빠름 → 느림 (놀이공원 / 회전그네 / 그네 형태)
+  // → "신나는 놀이공원 음악과 점점 빨라지다 다시 느려지면서 함께 멈춤" 같은 요청에 한 줄 답.
+  speed_arc?: {
+    motor: MotorId;
+    direction?: Direction;
+    curve: 'crescendo' | 'decrescendo' | 'arc';
+    min_speed?: SpeedLabel;   // 곡선의 최저 속도. 기본 '아주 느리게'
+    max_speed?: SpeedLabel;   // 곡선의 최고 속도. 기본 '아주 빠르게'
+  };
   // 📏 거리 반응형 tempo — 거리 센서값 → tempo 매핑.
   // 설정 시 tune 이 자동 loop 됨 (한 곡 끝나면 새 tempo 로 재생). 거리가 stop_cm_below 이하
   // 가 되거나 max_loops 도달 또는 timeout_ms 지나면 종료.
@@ -390,8 +403,12 @@ function validateStep(step: Step, path: string): void {
           throw new DslValidationError(`${path}.custom`, 'tune=custom 일 땐 custom.notes 배열 필수');
         }
       }
-      if (!Array.isArray(step.motion) || step.motion.length === 0) {
-        throw new DslValidationError(`${path}.motion`, 'tune_sync.motion 은 비어있을 수 없음');
+      if (!Array.isArray(step.motion)) {
+        throw new DslValidationError(`${path}.motion`, 'tune_sync.motion 은 배열');
+      }
+      // speed_arc 있으면 motion 비어도 OK (인터프리터가 자동 생성)
+      if (step.motion.length === 0 && !step.speed_arc) {
+        throw new DslValidationError(`${path}.motion`, 'tune_sync.motion 은 비어있을 수 없음 (speed_arc 없을 때)');
       }
       // 중첩 음악 step 금지 — 사이클 안에 또 음악이 들어가면 동시 재생 + 길이 추정 깨짐.
       for (let i = 0; i < step.motion.length; i++) {
@@ -400,6 +417,24 @@ function validateStep(step: Step, path: string): void {
           throw new DslValidationError(`${path}.motion[${i}]`, 'tune_sync.motion 안에 play_tune/tune_sync 중첩 금지');
         }
         validateStep(s, `${path}.motion[${i}]`);
+      }
+      if (step.speed_arc) {
+        const sa = step.speed_arc;
+        if (!MOTOR_IDS.includes(sa.motor)) {
+          throw new DslValidationError(`${path}.speed_arc.motor`, `잘못된 motor: ${sa.motor}`);
+        }
+        if (!['crescendo', 'decrescendo', 'arc'].includes(sa.curve)) {
+          throw new DslValidationError(`${path}.speed_arc.curve`, `잘못된 curve: ${sa.curve}`);
+        }
+        if (sa.direction && sa.direction !== 'forward' && sa.direction !== 'reverse') {
+          throw new DslValidationError(`${path}.speed_arc.direction`, `잘못된 direction`);
+        }
+        if (sa.min_speed && !SPEED_LABELS.includes(sa.min_speed)) {
+          throw new DslValidationError(`${path}.speed_arc.min_speed`, `잘못된 min_speed`);
+        }
+        if (sa.max_speed && !SPEED_LABELS.includes(sa.max_speed)) {
+          throw new DslValidationError(`${path}.speed_arc.max_speed`, `잘못된 max_speed`);
+        }
       }
       if (step.distance_tempo) {
         const dt = step.distance_tempo;

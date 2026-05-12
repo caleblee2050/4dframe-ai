@@ -478,6 +478,51 @@ function scaleMotionByTempo(steps: Step[], tempo: number): Step[] {
   });
 }
 
+// speed_arc → 음악 길이에 맞춰 spin step 시퀀스 자동 생성.
+// curve='crescendo': min→max 5단계. 'decrescendo': max→min 5단계.
+// 'arc': min→max→min 9단계 (놀이공원 회전그네 호 형태).
+function generateSpeedArcMotion(
+  arc: NonNullable<TuneSyncStep['speed_arc']>,
+  totalMs: number,
+): Step[] {
+  const SPEED_RANK: SpeedLabel[] = ['아주 느리게', '느리게', '보통', '빠르게', '아주 빠르게'];
+  const minIdx = arc.min_speed ? SPEED_RANK.indexOf(arc.min_speed) : 0;
+  const maxIdx = arc.max_speed ? SPEED_RANK.indexOf(arc.max_speed) : 4;
+  const lo = Math.min(minIdx, maxIdx);
+  const hi = Math.max(minIdx, maxIdx);
+  const direction = arc.direction ?? 'forward';
+
+  // curve 별 속도 시퀀스 (rank index 배열)
+  let sequence: number[];
+  if (arc.curve === 'crescendo') {
+    sequence = [];
+    const steps = Math.max(2, hi - lo + 1);
+    for (let i = 0; i < steps; i++) sequence.push(lo + i);
+  } else if (arc.curve === 'decrescendo') {
+    sequence = [];
+    const steps = Math.max(2, hi - lo + 1);
+    for (let i = 0; i < steps; i++) sequence.push(hi - i);
+  } else {
+    // arc — 호 형태. 올라갔다 내려옴.
+    const up: number[] = [];
+    const down: number[] = [];
+    const steps = Math.max(2, hi - lo + 1);
+    for (let i = 0; i < steps; i++) up.push(lo + i);
+    for (let i = steps - 2; i >= 0; i--) down.push(lo + i);
+    sequence = [...up, ...down];
+  }
+
+  // 각 step 의 duration_ms = totalMs / sequence.length. 최소 200ms 보장 (시동 토크).
+  const baseDuration = Math.max(200, Math.floor(totalMs / sequence.length));
+  return sequence.map((idx) => ({
+    do: 'spin' as const,
+    motor: arc.motor,
+    speed: SPEED_RANK[idx],
+    direction,
+    duration_ms: baseDuration,
+  }));
+}
+
 async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, _path: string) {
   // 🦈 distance_tempo 가 있으면 = loop 모드 (죠스 다가오기).
   if (step.distance_tempo) {
@@ -508,11 +553,22 @@ async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, _path: string) {
   // 일반 모드 — 한 곡 + motion 동기 + 끝나면 stop.
   const tempo = step.tempo ?? 1.0;
   const totalMs = melodyDurationMs(step.tune, tempo, step.custom);
+
+  // 🎢 speed_arc 가 있으면 motion 을 자동 생성 + loop_motion 강제 false.
+  let effectiveStep: TuneSyncStep = step;
+  if (step.speed_arc) {
+    effectiveStep = {
+      ...step,
+      motion: generateSpeedArcMotion(step.speed_arc, totalMs),
+      loop_motion: false,
+    };
+  }
+
   // loop_motion=false 일 때 motion 이 음악보다 길 수도 있으니 deadline 을 충분히 잡음.
-  const scaledMotion = scaleMotionByTempo(step.motion, tempo);
+  const scaledMotion = scaleMotionByTempo(effectiveStep.motion, tempo);
   const motionTotalMs = estimateMotionCycleMs(scaledMotion);
   const targetMs = Math.max(totalMs, motionTotalMs);
-  await playTuneOnce(step, ctx, tempo, Date.now() + targetMs + 2000);
+  await playTuneOnce(effectiveStep, ctx, tempo, Date.now() + targetMs + 2000);
   if (ctx.signal?.aborted) {
     try { stopMelody(); } catch {}
   }
