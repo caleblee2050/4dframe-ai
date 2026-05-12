@@ -11,7 +11,7 @@
 import type {
   Program, Step, MotorId, SpeedLabel,
   SpinStep, DriveStep, ServoStep, SpeedStep, StopStep, WaitStep,
-  WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep, PlaySoundStep, PlayTuneStep,
+  WaitForDistanceStep, RepeatStep, SayStep, CalibrateStep, PlaySoundStep, PlayTuneStep, TuneSyncStep,
   SetMotorDirStep, SetMotorThresholdStep,
 } from './schema';
 import {
@@ -19,6 +19,7 @@ import {
 } from '@/lib/commands/commands';
 import { calibratedPwmLevel, useCalibrationStore } from '@/lib/calibration/store';
 import { useBoardStore } from '@/lib/serial/webSerial';
+import { melodyDurationMs, stopMelody } from '@/lib/sound/melodySynth';
 
 export type InterpreterEvent =
   | { type: 'say'; text: string }
@@ -124,6 +125,8 @@ async function executeStep(step: Step, ctx: StepCtx, path: string): Promise<void
       return execPlaySound(step, ctx);
     case 'play_tune':
       return execPlayTune(step, ctx);
+    case 'tune_sync':
+      return execTuneSync(step, ctx, path);
     case 'save_skill':
       return ctx.emit({ type: 'save_skill', label: step.label, emoji: step.emoji });
     case 'set_motor_dir':
@@ -302,6 +305,60 @@ async function execPlayTune(step: PlayTuneStep, ctx: StepCtx) {
   } else {
     ctx.emit({ type: 'play_tune', tune: step.tune, tempo: step.tempo ?? 1.0, await_melody: false, custom: step.custom });
   }
+}
+
+// 모션 사이클 한 번이 대략 몇 ms 걸리는지 추정 — 마지막 사이클 시작이 음악 끝을 넘기는지 판단용.
+// servo step 은 ±15도 당 200ms (interpreter SERVO_STEP_DELAY_MS 와 동일).
+function estimateMotionCycleMs(steps: Step[]): number {
+  let total = 0;
+  for (const s of steps) {
+    if (s.do === 'spin' || s.do === 'drive') {
+      if (s.duration_ms) total += s.duration_ms;
+    } else if (s.do === 'wait') {
+      total += s.ms;
+    } else if (s.do === 'servo') {
+      const n = s.step !== undefined
+        ? Math.abs(s.step)
+        : s.to_degrees !== undefined
+          ? Math.ceil(Math.abs(s.to_degrees - 90) / 15)
+          : 0;
+      total += n * 200;
+    } else if (s.do === 'repeat') {
+      total += s.times * estimateMotionCycleMs(s.steps);
+    }
+    // say/play_sound/calibrate/stop/speed/set_* 등은 거의 즉시 → 0
+  }
+  return total;
+}
+
+async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, path: string) {
+  const tempo = step.tempo ?? 1.0;
+  const totalMs = melodyDurationMs(step.tune, tempo, step.custom);
+  const trim = step.trim_to_music ?? true;
+  const cycleMs = estimateMotionCycleMs(step.motion);
+
+  // 음악 시작 (fire-and-forget — await 하면 사이클이 못 돈다)
+  ctx.emit({ type: 'play_tune', tune: step.tune, tempo, await_melody: false, custom: step.custom });
+  const startedAt = Date.now();
+
+  let iter = 0;
+  while (true) {
+    if (ctx.signal?.aborted) {
+      try { stopMelody(); } catch {}
+      await safeStop(ctx.send);
+      return;
+    }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= totalMs) break;
+    // 마지막 사이클 시작이 음악 끝을 너무 넘기면 생략 (음악 끝 = 모터 끝 보장)
+    if (trim && cycleMs > 0 && elapsed + cycleMs > totalMs + 150) break;
+    await ctx.runSubSteps(step.motion, `${path}.motion.iter[${iter++}]`);
+  }
+
+  // 음악 끝 시점까지 정확히 대기 후 stop — 잔여 모터 회전 차단
+  const remaining = totalMs - (Date.now() - startedAt);
+  if (remaining > 0) await ctx.delay(remaining);
+  await ctx.send(GLOBAL.stopAll);
 }
 
 async function safeStop(send: (p: string) => Promise<void>) {

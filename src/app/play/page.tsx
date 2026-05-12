@@ -115,6 +115,7 @@ const stepIcon: Record<Step['do'], string> = {
   spin: '🔄', drive: '🚗', servo: '🎚', speed: '⚡',
   stop: '⏹', wait: '⏱', wait_for_distance: '👀', repeat: '🔁',
   say: '💬', calibrate: '🔧', play_sound: '🔊', play_tune: '🎵',
+  tune_sync: '🎵🔄',
   save_skill: '💾',
   set_motor_dir: '🔃', set_motor_threshold: '🎛',
 };
@@ -155,6 +156,14 @@ function describeStep(step: Step): string {
         beep_pattern: '띠띠띠', music_box: '오르골', jaws: '죠스 등장음',
       };
       return `🎵 ${tuneMap[step.tune] ?? step.tune}`;
+    }
+    case 'tune_sync': {
+      const tuneMap: Record<string, string> = {
+        school_bell: '학교종', twinkle: '반짝반짝', butterfly: '나비야',
+        mountain_rabbit: '산토끼', three_bears: '곰세마리', airplane: '비행기',
+        beep_pattern: '띠띠띠', music_box: '오르골', jaws: '죠스 등장음', custom: '즉석곡',
+      };
+      return `🎵🔄 ${tuneMap[step.tune] ?? step.tune} 끝까지 ${step.motion.length}개 동작 반복`;
     }
     case 'save_skill':
       return `💾 저장: ${step.emoji} ${step.label}`;

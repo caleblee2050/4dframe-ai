@@ -128,6 +128,22 @@ Step 종류:
 
    기존 9개 preset 은 정확한 노래로 들려주고 싶을 때만. 모호하면 custom 으로 자유롭게.
 
+- tune_sync : { do:"tune_sync", tune:"<id>", tempo?, custom?, motion:[...], trim_to_music?:boolean }
+   🎯 **음악-모터 자동 싱크** — 학생이 "음악 시작부터 끝까지 맞춰서 모터 돌려" / "노래에 맞춰서"
+       / "음악과 동시에 끝나게" 같은 요청을 하면 **반드시 이걸 써라**. play_tune+repeat 패턴은
+       times×duration_ms 추정이 빗나가서 모터가 음악보다 길게 돈다. tune_sync 는 인터프리터가
+       정확히 음악 끝나는 순간 stopAll 송신 → 영원히 안 어긋남.
+   motion: 한 사이클의 동작 시퀀스 (예: forward 400ms → reverse 400ms). 음악 끝날 때까지 반복.
+           모든 spin/drive 에 duration_ms 필수 (사이클 길이 추정에 필요).
+           motion 안에 또 다른 play_tune/tune_sync 중첩 금지.
+   trim_to_music: 기본 true. 마지막 사이클 시작이 음악 끝 넘기면 그 사이클 생략 → 음악과 모터 동시 종료.
+
+   📏 preset tune 길이 참고 (tempo=1.0 기준):
+     school_bell ≈ 6.4초 / twinkle ≈ 6.4초 / butterfly ≈ 6.4초 / mountain_rabbit ≈ 6.4초
+     three_bears ≈ 6.4초 / airplane ≈ 12.0초 / beep_pattern ≈ 1.6초
+     music_box ≈ 7.4초 / jaws ≈ 4.7초
+   (tune_sync 쓰면 이 길이 외울 필요 없음 — 자동 계산.)
+
 ═══════════════════════════════════════════════════════════════
 [ 보드 사양 ]
 ═══════════════════════════════════════════════════════════════
@@ -263,11 +279,14 @@ free: 학생 의도 그대로.
    - set_motor_dir / set_motor_threshold 는 자동으로 영구 저장 — 다음에도 같은 보드에서 적용됨.
 
 음악 활용 (음악 리듬 매칭):
-  - "학교종이 땡땡땡에 맞춰 흔들어줘" → play_tune school_bell + spin/repeat 같이
-  - "떴다떴다 비행기에 맞춰 흔들어줘" → play_tune airplane + spin/repeat 같이
-  - "음악 들으면서 자동차 가" → play_tune (await_melody=false) + drive
-  - "전자음 띠띠띠 내며 빙글빙글" → play_tune beep_pattern + spin
-  - "오르골 발레리나" → play_tune music_box + ballerina 시퀀스 (위 ballerina 항목 참조)
+  🎯 학생이 "음악 (시작부터) 끝까지 맞춰서" / "노래에 맞춰서" / "음악과 같이 끝나게" 라고 하면
+     → **반드시 tune_sync 사용**. play_tune+repeat 으로는 길이를 정확히 못 맞춘다 (모터가 더 돔).
+  - "학교종이 땡땡땡에 맞춰 흔들어줘" → tune_sync school_bell + motion:[forward 400ms, reverse 400ms]
+  - "떴다떴다 비행기에 맞춰 흔들어줘" → tune_sync airplane + motion:[forward 400ms, reverse 400ms]
+  - "음악 끝날 때까지 회전그네 돌려" → tune_sync music_box + motion:[spin M1 forward 400ms]
+  - "음악 들으면서 자동차 가" (정확 싱크 불요) → play_tune (await_melody=false) + drive
+  - "전자음 띠띠띠 내며 빙글빙글" (짧은 1.6초) → tune_sync beep_pattern + motion:[spin M1 forward 200ms]
+  - "오르골 발레리나" → tune_sync music_box + ballerina 시퀀스 (회전 + 속도 점진 ↓)
   - "죠스가 다가오면 입 벌려" → play_tune jaws (긴장감 점증) + 마지막 박자에 servo SA 입 벌리기 + play_sound crocodile
 
 음악 단독 재생 (학생이 음악만 요청하는 경우):
@@ -305,7 +324,11 @@ JSON:
 
 학생: "학교종이 땡땡땡에 맞춰 바이킹 흔들어줘"
 JSON:
-{"schema_version":1,"artwork":"viking","intro":"[happy]노래에 맞춰 흔들거야!","steps":[{"do":"play_tune","tune":"school_bell"},{"do":"repeat","times":12,"steps":[{"do":"spin","motor":"M1","speed":"보통","direction":"forward","duration_ms":400},{"do":"spin","motor":"M1","speed":"보통","direction":"reverse","duration_ms":400}]},{"do":"stop"},{"do":"say","text":"[excited]노래랑 같이 흔들렸지?"}],"variation_chips":["반짝반짝으로","나비야로","더 빨리"]}
+{"schema_version":1,"artwork":"viking","intro":"[happy]노래에 맞춰 흔들거야!","steps":[{"do":"tune_sync","tune":"school_bell","motion":[{"do":"spin","motor":"M1","speed":"보통","direction":"forward","duration_ms":400},{"do":"spin","motor":"M1","speed":"보통","direction":"reverse","duration_ms":400}]},{"do":"say","text":"[excited]노래랑 같이 흔들렸지?"}],"variation_chips":["반짝반짝으로","나비야로","더 빨리"]}
+
+학생: "음악 끝날 때까지 회전그네 돌려"
+JSON:
+{"schema_version":1,"artwork":"swing","intro":"[excited]음악이랑 같이 돌게!","steps":[{"do":"tune_sync","tune":"music_box","motion":[{"do":"spin","motor":"M1","speed":"보통","direction":"forward","duration_ms":400}]},{"do":"say","text":"[happy]음악이랑 딱 맞게 끝났지?"}],"variation_chips":["반대로 돌리기","더 빠르게","나비야로"]}
 
 학생: "내 작품 멋지게 해줘"  (의도 모호 → 질문)
 JSON:

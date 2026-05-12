@@ -159,6 +159,25 @@ export interface PlayTuneStep extends BaseStep {
   await_melody?: boolean;
 }
 
+// 🎵↔️🔄 음악-모터 자동 싱크.
+// AI 가 "음악 시작부터 끝까지 모터 돌려" 요청 받으면 이걸 쓴다.
+// 인터프리터가 melodyDurationMs(tune,tempo) 로 정확한 음악 길이를 알고,
+// motion 사이클을 반복 실행하며 음악 끝나는 순간 stopAll 송신.
+// → AI 가 times×duration_ms 추정 안 해도 됨 → 음악-모터 미스매치 사라짐.
+export interface TuneSyncStep extends BaseStep {
+  do: 'tune_sync';
+  tune: TuneId;
+  tempo?: number;
+  custom?: CustomTune;
+  // 한 사이클의 동작 시퀀스. 음악이 끝날 때까지 반복.
+  // spin/drive 에는 반드시 duration_ms (사이클 추정에 필요).
+  // 중첩 tune_sync / play_tune 금지 (음악 중복 재생 방지).
+  motion: Step[];
+  // true 면 마지막 사이클 시작이 음악 끝을 넘기면 그 사이클 생략. 기본 true.
+  // false 면 마지막 사이클 끝까지 실행 (살짝 오버슈팅 허용).
+  trim_to_music?: boolean;
+}
+
 // 스킬 저장 step — 학생이 "저장해줘" 한 직후 AI 가 이 step 만 응답.
 // 클라이언트가 마지막으로 실행한 program 을 학생 친화 이름/이모지로 customSkills 에 저장.
 export interface SaveSkillStep extends BaseStep {
@@ -197,6 +216,7 @@ export type Step =
   | CalibrateStep
   | PlaySoundStep
   | PlayTuneStep
+  | TuneSyncStep
   | SaveSkillStep
   | SetMotorDirStep
   | SetMotorThresholdStep;
@@ -336,6 +356,27 @@ function validateStep(step: Step, path: string): void {
         if (step.custom.timbre !== undefined && !['square','triangle','sine'].includes(step.custom.timbre)) {
           throw new DslValidationError(`${path}.custom.timbre`, 'timbre 는 square/triangle/sine');
         }
+      }
+      return;
+    case 'tune_sync':
+      if (!['school_bell','twinkle','butterfly','mountain_rabbit','three_bears','airplane','beep_pattern','music_box','jaws','custom'].includes(step.tune))
+        throw new DslValidationError(`${path}.tune`, `잘못된 tune: ${step.tune}`);
+      if (step.tempo !== undefined) assertInRange(`${path}.tempo`, step.tempo, 0.5, 3);
+      if (step.tune === 'custom') {
+        if (!step.custom || !Array.isArray(step.custom.notes) || step.custom.notes.length === 0) {
+          throw new DslValidationError(`${path}.custom`, 'tune=custom 일 땐 custom.notes 배열 필수');
+        }
+      }
+      if (!Array.isArray(step.motion) || step.motion.length === 0) {
+        throw new DslValidationError(`${path}.motion`, 'tune_sync.motion 은 비어있을 수 없음');
+      }
+      // 중첩 음악 step 금지 — 사이클 안에 또 음악이 들어가면 동시 재생 + 길이 추정 깨짐.
+      for (let i = 0; i < step.motion.length; i++) {
+        const s = step.motion[i];
+        if (s.do === 'tune_sync' || s.do === 'play_tune') {
+          throw new DslValidationError(`${path}.motion[${i}]`, 'tune_sync.motion 안에 play_tune/tune_sync 중첩 금지');
+        }
+        validateStep(s, `${path}.motion[${i}]`);
       }
       return;
     case 'save_skill':
