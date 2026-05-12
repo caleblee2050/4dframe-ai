@@ -150,7 +150,7 @@ Step 종류:
 
    🎢 speed_arc (★★★ 매우 중요 ★★★) — 속도 변화 자동 생성.
      { motor:"M1", direction?:"forward"|"reverse", curve:"crescendo"|"decrescendo"|"arc",
-       min_speed?:SpeedLabel, max_speed?:SpeedLabel }
+       min_speed?:SpeedLabel, max_speed?:SpeedLabel, duration_ms?:number }
      curve:
        - crescendo (점점 빨라짐): 아주 느리게 → 아주 빠르게 5단계
        - decrescendo (점점 느려짐): 아주 빠르게 → 아주 느리게 5단계
@@ -170,11 +170,35 @@ Step 종류:
    🎼 loop_motion (boolean, 기본 true) — speed_arc 대신 직접 motion 짤 때.
      speed_arc 가 모든 일반 케이스 커버하므로 loop_motion 은 거의 안 씀.
 
-   ⏱ 음악 길이 가이드 — 학생 의도에 맞게 충분히 길게:
-     - "신나는 놀이공원" / "회전그네 한 바퀴" → 8~12초 음악 (custom 20~30음 또는 airplane preset)
-     - "잠깐 시동" → 3~5초 (음표 적게)
-     - "긴 여정" → 12~20초 (음표 많이, 다채롭게)
-     너무 짧으면 (5초 이하) 속도 변화가 제대로 안 느껴짐. AI 가 알아서 길이 판단.
+   ⏱ 음악 길이 가이드 — 학생 의도에 맞게 충분히 길게.
+     기본 추정 (학생이 시간 명시 안 했을 때):
+       - "신나는 놀이공원" / "회전그네 한 바퀴" → 8~12초
+       - "잠깐 시동" → 3~5초
+       - "긴 여정" → 12~20초
+     너무 짧으면 (5초 이하) 속도 변화가 제대로 안 느껴짐.
+
+   🕒 학생이 명시적으로 시간 요청 시 (★★★ 반드시 지켜라 ★★★):
+     "10초 동안" / "5초만" / "20초로" 등 시간 언급 → 그 시간 정확히 반영.
+     두 가지 동시 적용:
+
+     (1) speed_arc.duration_ms = 학생이 말한 ms (예: "10초" → 10000)
+         → 인터프리터가 정확히 이 시간 동안 모터 속도 곡선 진행.
+
+     (2) custom tune 의 note beats 합 = 학생이 말한 시간에 매칭:
+         beats 합 ≈ duration_seconds × 2.5   (tempo 1.0 기준, BASE_BEAT_MS=400 이므로)
+         예) 10초 → 25 beats 합. 20음 × 평균 1.25 beats 또는 15음 × 평균 1.67 beats.
+         예) 5초 → 12.5 beats. 10음 × 평균 1.25 beats.
+         beats 합이 부족하면 음악만 일찍 끝나고 모터는 계속 — 어색함.
+
+     예) "10초 동안 회전그네" (custom tune ≈ 25 beats 합 + speed_arc.duration_ms=10000):
+       notes:[
+         {pitch:"C4",beats:2.5},{pitch:"E4",beats:2.0},{pitch:"G4",beats:1.7},
+         {pitch:"C5",beats:1.4},{pitch:"E5",beats:1.0},{pitch:"G5",beats:0.8},
+         {pitch:"E5",beats:0.8},{pitch:"C5",beats:0.8},{pitch:"G5",beats:0.8},
+         {pitch:"E5",beats:0.8},{pitch:"C5",beats:1.0},{pitch:"G4",beats:1.4},
+         {pitch:"E4",beats:1.7},{pitch:"C4",beats:2.0},{pitch:"C4",beats:2.5}
+       ]  (합 21.2 beats ≈ 8.5초 — 부족하므로 더 추가하거나 beats 늘리기)
+       검산: beats 합 × 0.4 = 실제 초. 25 × 0.4 = 10초 정확. 항상 검산할 것.
    tempo: 0.5 ~ 3.0. 학생 요청에 맞춰 조절. 기본 1.0.
      - "음악 빠르게" / "신나게" → 1.5 ~ 2.0
      - "음악 천천히" / "잔잔하게" / "느리게" → 0.6 ~ 0.8
@@ -394,23 +418,27 @@ JSON:
 
 학생: "신나는 놀이공원 음악과 함께 회전그네 출발. 음악과 함께 점점 빨라지다가 다시 서서히 느려지면서 음악과 함께 멈춘다"
    → 속도 변화 신호 ("점점 빨라지다 느려지면서") → speed_arc curve:"arc".
-   → "신나는 놀이공원" → 충분히 긴 음악 필요 (~10초 = custom 15+ notes).
-   → motion 빈 배열. AI 가 motion 직접 짜지 말고 speed_arc 에 맡길 것.
+   → "신나는 놀이공원" → 충분히 긴 음악 필요. 시간 명시 없으면 ~10초.
+   → 검산: beats 합 = 25 → 10초. duration_ms=10000.
 JSON:
 {"schema_version":1,"artwork":"swing","intro":"[excited]놀이공원 가자!","steps":[
   {"do":"tune_sync","tune":"custom",
     "custom":{"timbre":"square","notes":[
-      {"pitch":"C4","beats":1.5},{"pitch":"E4","beats":1.2},{"pitch":"G4","beats":1.0},
-      {"pitch":"C5","beats":0.8},{"pitch":"E5","beats":0.6},{"pitch":"G5","beats":0.5},
-      {"pitch":"E5","beats":0.5},{"pitch":"C5","beats":0.5},{"pitch":"G5","beats":0.5},
-      {"pitch":"E5","beats":0.5},{"pitch":"C5","beats":0.6},{"pitch":"G4","beats":0.8},
-      {"pitch":"E4","beats":1.0},{"pitch":"C4","beats":1.2},{"pitch":"C4","beats":1.5}
+      {"pitch":"C4","beats":2.5},{"pitch":"E4","beats":2.0},{"pitch":"G4","beats":1.7},
+      {"pitch":"C5","beats":1.4},{"pitch":"E5","beats":1.0},{"pitch":"G5","beats":0.8},
+      {"pitch":"E5","beats":0.8},{"pitch":"C5","beats":0.8},{"pitch":"G5","beats":0.8},
+      {"pitch":"E5","beats":0.8},{"pitch":"C5","beats":1.0},{"pitch":"G4","beats":1.4},
+      {"pitch":"E4","beats":1.7},{"pitch":"C4","beats":2.0},{"pitch":"C4","beats":2.5}
     ]},
     "motion":[],
-    "speed_arc":{"motor":"M1","direction":"forward","curve":"arc"}
+    "speed_arc":{"motor":"M1","direction":"forward","curve":"arc","duration_ms":10000}
   },
   {"do":"say","text":"[happy]놀이공원 신나게 한 바퀴 끝!"}
 ],"variation_chips":["거꾸로 돌리기","더 신나게","오르골로","조용히"]}
+
+학생: "10초 동안 신나게 회전그네 점점 빨라졌다 느려져"
+   → 학생이 "10초" 명시 → custom 25 beats 합 + duration_ms:10000.
+JSON: (위 예시와 거의 동일, intro 만 "[excited]10초 신나게!" 식)
 
 학생: "점점 빨라지면서 회전그네 출발해서 음악 끝나면 멈춰"
    → speed_arc curve:"crescendo".

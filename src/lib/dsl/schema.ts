@@ -198,6 +198,11 @@ export interface TuneSyncStep extends BaseStep {
     curve: 'crescendo' | 'decrescendo' | 'arc';
     min_speed?: SpeedLabel;   // 곡선의 최저 속도. 기본 '아주 느리게'
     max_speed?: SpeedLabel;   // 곡선의 최고 속도. 기본 '아주 빠르게'
+    // 🕒 모터 동작 총 시간. 학생이 "10초 동안" 같이 명시하면 반드시 설정.
+    //   - 미설정: 음악 길이에 맞춤 (음악 짧으면 동작도 짧음).
+    //   - 설정: 음악과 별개로 이 시간만큼 motor 진행. 음악이 짧으면 음악 끝나도 모터 계속.
+    //   범위 1000 ~ 60000 (1~60초).
+    duration_ms?: number;
   };
   // 📏 거리 반응형 tempo — 거리 센서값 → tempo 매핑.
   // 설정 시 tune 이 자동 loop 됨 (한 곡 끝나면 새 tempo 로 재생). 거리가 stop_cm_below 이하
@@ -434,6 +439,9 @@ function validateStep(step: Step, path: string): void {
         }
         if (sa.max_speed && !SPEED_LABELS.includes(sa.max_speed)) {
           throw new DslValidationError(`${path}.speed_arc.max_speed`, `잘못된 max_speed`);
+        }
+        if (sa.duration_ms !== undefined) {
+          assertInRange(`${path}.speed_arc.duration_ms`, sa.duration_ms, 1000, 60000);
         }
       }
       if (step.distance_tempo) {

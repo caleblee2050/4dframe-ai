@@ -556,11 +556,13 @@ async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, _path: string) {
   const totalMs = melodyDurationMs(step.tune, tempo, step.custom);
 
   // 🎢 speed_arc 가 있으면 motion 을 자동 생성 + loop_motion 강제 false.
+  // duration_ms 가 명시되면 그 시간 기준으로 arc 생성 (음악과 별개).
   let effectiveStep: TuneSyncStep = step;
   if (step.speed_arc) {
+    const arcDurationMs = step.speed_arc.duration_ms ?? totalMs;
     effectiveStep = {
       ...step,
-      motion: generateSpeedArcMotion(step.speed_arc, totalMs),
+      motion: generateSpeedArcMotion(step.speed_arc, arcDurationMs),
       loop_motion: false,
     };
   }
