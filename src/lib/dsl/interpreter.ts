@@ -558,20 +558,63 @@ async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, _path: string) {
   // 🎢 speed_arc 가 있으면 motion 을 자동 생성 + loop_motion 강제 false.
   // duration_ms 가 명시되면 그 시간 기준으로 arc 생성 (음악과 별개).
   let effectiveStep: TuneSyncStep = step;
+  let effectiveTempo = tempo;
+  let effectiveTotalMs = totalMs;
   if (step.speed_arc) {
     const arcDurationMs = step.speed_arc.duration_ms ?? totalMs;
+
+    // 🎵↔️⏱ 음악 자동 stretch — duration_ms 가 명시되면 음악도 그 시간에 맞춤.
+    // AI 가 custom.notes 길이 정확히 계산하지 못해도, 인터프리터가 tempo 조정해서 stretch.
+    // 1) 1차: tempo 조정 (0.5~3 범위 가능).
+    // 2) tempo 범위 넘으면: custom.notes beats 직접 scale (각 0.1~8 clamp).
+    // preset tune 은 stretch 안 함 — 노래 자체가 의미 있는 길이라 늘리면 어색.
+    if (step.speed_arc.duration_ms && step.tune === 'custom' && step.custom) {
+      const naturalBeats = step.custom.notes.reduce(
+        (sum, n) => sum + Math.max(0.1, Math.min(8, n.beats)), 0,
+      );
+      const naturalMs = naturalBeats * 400;  // tempo 1.0 기준
+      if (naturalMs > 0 && Math.abs(naturalMs - arcDurationMs) > 300) {
+        // 수식: duration = sum(beats) × 400 / tempo
+        //       원하는 duration = arcDurationMs
+        //       → tempo = naturalMs / arcDurationMs
+        const targetTempo = naturalMs / arcDurationMs;
+        if (targetTempo >= 0.5 && targetTempo <= 3.0) {
+          // tempo 만으로 해결 가능 (예: 5초 자연 → 10초 목표 → tempo 0.5)
+          effectiveTempo = targetTempo;
+        } else {
+          // tempo 범위 [0.5, 3.0] 넘음 → tempo 끝값으로 고정 + beats 직접 scale
+          effectiveTempo = targetTempo < 0.5 ? 0.5 : 3.0;
+          // 이 tempo 에서 자연 재생 시간:
+          //   adjustedMs = naturalMs / effectiveTempo
+          // 추가로 beats 를 scale 해서 arcDurationMs 만큼 더 늘리거나 줄임:
+          //   beatsScale = arcDurationMs / adjustedMs
+          const adjustedMs = naturalMs / effectiveTempo;
+          const beatsScale = arcDurationMs / adjustedMs;
+          const newCustom = {
+            ...step.custom,
+            notes: step.custom.notes.map((n) => ({
+              ...n,
+              beats: Math.max(0.1, Math.min(8, n.beats * beatsScale)),
+            })),
+          };
+          effectiveStep = { ...step, custom: newCustom };
+        }
+        effectiveTotalMs = arcDurationMs;
+      }
+    }
+
     effectiveStep = {
-      ...step,
+      ...effectiveStep,
       motion: generateSpeedArcMotion(step.speed_arc, arcDurationMs),
       loop_motion: false,
     };
   }
 
   // loop_motion=false 일 때 motion 이 음악보다 길 수도 있으니 deadline 을 충분히 잡음.
-  const scaledMotion = scaleMotionByTempo(effectiveStep.motion, tempo);
+  const scaledMotion = scaleMotionByTempo(effectiveStep.motion, effectiveTempo);
   const motionTotalMs = estimateMotionCycleMs(scaledMotion);
-  const targetMs = Math.max(totalMs, motionTotalMs);
-  await playTuneOnce(effectiveStep, ctx, tempo, Date.now() + targetMs + 2000);
+  const targetMs = Math.max(effectiveTotalMs, motionTotalMs);
+  await playTuneOnce(effectiveStep, ctx, effectiveTempo, Date.now() + targetMs + 2000);
   if (ctx.signal?.aborted) {
     try { stopMelody(); } catch {}
   }

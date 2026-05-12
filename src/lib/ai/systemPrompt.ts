@@ -240,28 +240,18 @@ Step 종류:
        - "긴 여정" → 12~20초
      너무 짧으면 (5초 이하) 속도 변화가 제대로 안 느껴짐.
 
-   🕒 학생이 명시적으로 시간 요청 시 (★★★ 반드시 지켜라 ★★★):
-     "10초 동안" / "5초만" / "20초로" 등 시간 언급 → 그 시간 정확히 반영.
-     두 가지 동시 적용:
+   🕒 학생이 명시적으로 시간 요청 시 (★ 중요 ★):
+     "10초 동안" / "5초만" / "20초로" 등 시간 언급 → speed_arc.duration_ms = 그 ms.
+     예) "10초" → speed_arc.duration_ms: 10000.
 
-     (1) speed_arc.duration_ms = 학생이 말한 ms (예: "10초" → 10000)
-         → 인터프리터가 정확히 이 시간 동안 모터 속도 곡선 진행.
+     💡 custom tune 의 note beats 합은 신경 안 써도 됨 — 인터프리터가 자동으로 음악을 stretch
+        해서 duration_ms 에 맞춤. AI 는 음악의 분위기/리듬/멜로디에 집중하면 된다.
+        (인터프리터가 tempo + beats scale 로 자연 길이를 duration_ms 에 맞게 자동 조정.)
 
-     (2) custom tune 의 note beats 합 = 학생이 말한 시간에 매칭:
-         beats 합 ≈ duration_seconds × 2.5   (tempo 1.0 기준, BASE_BEAT_MS=400 이므로)
-         예) 10초 → 25 beats 합. 20음 × 평균 1.25 beats 또는 15음 × 평균 1.67 beats.
-         예) 5초 → 12.5 beats. 10음 × 평균 1.25 beats.
-         beats 합이 부족하면 음악만 일찍 끝나고 모터는 계속 — 어색함.
-
-     예) "10초 동안 회전그네" (custom tune ≈ 25 beats 합 + speed_arc.duration_ms=10000):
-       notes:[
-         {pitch:"C4",beats:2.5},{pitch:"E4",beats:2.0},{pitch:"G4",beats:1.7},
-         {pitch:"C5",beats:1.4},{pitch:"E5",beats:1.0},{pitch:"G5",beats:0.8},
-         {pitch:"E5",beats:0.8},{pitch:"C5",beats:0.8},{pitch:"G5",beats:0.8},
-         {pitch:"E5",beats:0.8},{pitch:"C5",beats:1.0},{pitch:"G4",beats:1.4},
-         {pitch:"E4",beats:1.7},{pitch:"C4",beats:2.0},{pitch:"C4",beats:2.5}
-       ]  (합 21.2 beats ≈ 8.5초 — 부족하므로 더 추가하거나 beats 늘리기)
-       검산: beats 합 × 0.4 = 실제 초. 25 × 0.4 = 10초 정확. 항상 검산할 것.
+     예) "10초 동안 신나는 회전그네" — beats 합 무관, 분위기만 잘 잡으면 OK:
+       speed_arc: { motor:"M1", curve:"arc", duration_ms:10000 }
+       custom: { timbre:"square", notes:[/* 8~16음, 분위기 살리는 멜로디 */] }
+       → 인터프리터가 음악을 10초로 자동 늘리거나 줄여 모터 arc 와 동시 종료.
    tempo: 0.5 ~ 3.0. 학생 요청에 맞춰 조절. 기본 1.0.
      - "음악 빠르게" / "신나게" → 1.5 ~ 2.0
      - "음악 천천히" / "잔잔하게" / "느리게" → 0.6 ~ 0.8
