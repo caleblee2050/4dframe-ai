@@ -164,6 +164,10 @@ export interface PlayTuneStep extends BaseStep {
 // 인터프리터가 melodyDurationMs(tune,tempo) 로 정확한 음악 길이를 알고,
 // motion 사이클을 반복 실행하며 음악 끝나는 순간 stopAll 송신.
 // → AI 가 times×duration_ms 추정 안 해도 됨 → 음악-모터 미스매치 사라짐.
+//
+// 🦈 distance_tempo 가 있으면 = "죠스 다가오기" 모드:
+//   tune 이 반복(loop) 되면서 매 loop 시작 시 거리 센서 읽어 tempo 재계산.
+//   가까워질수록 tempo 빨라지고, 멀어지면 느려짐. 손이 닿을 만큼 가까우면 loop 종료.
 export interface TuneSyncStep extends BaseStep {
   do: 'tune_sync';
   tune: TuneId;
@@ -176,6 +180,19 @@ export interface TuneSyncStep extends BaseStep {
   // true 면 마지막 사이클 시작이 음악 끝을 넘기면 그 사이클 생략. 기본 true.
   // false 면 마지막 사이클 끝까지 실행 (살짝 오버슈팅 허용).
   trim_to_music?: boolean;
+  // 📏 거리 반응형 tempo — 거리 센서값 → tempo 매핑.
+  // 설정 시 tune 이 자동 loop 됨 (한 곡 끝나면 새 tempo 로 재생). 거리가 stop_cm_below 이하
+  // 가 되거나 max_loops 도달 또는 timeout_ms 지나면 종료.
+  // ⚠ distanceReactivityEnabled=true 인 보드에서만 사용 가능.
+  distance_tempo?: {
+    near_cm: number;          // 이 거리 이하면 near_tempo (보통 가까울수록 빠름)
+    far_cm: number;           // 이 거리 이상이면 far_tempo
+    near_tempo: number;       // 일반적 1.5 ~ 3.0
+    far_tempo: number;        // 일반적 0.5 ~ 0.9
+    stop_cm_below?: number;   // 이 거리 이하면 loop 즉시 종료. 기본 5
+    max_loops?: number;       // 최대 반복 수. 기본 10
+    timeout_ms?: number;      // 최대 총 시간. 기본 30000
+  };
 }
 
 // 스킬 저장 step — 학생이 "저장해줘" 한 직후 AI 가 이 step 만 응답.
@@ -377,6 +394,19 @@ function validateStep(step: Step, path: string): void {
           throw new DslValidationError(`${path}.motion[${i}]`, 'tune_sync.motion 안에 play_tune/tune_sync 중첩 금지');
         }
         validateStep(s, `${path}.motion[${i}]`);
+      }
+      if (step.distance_tempo) {
+        const dt = step.distance_tempo;
+        assertInRange(`${path}.distance_tempo.near_cm`, dt.near_cm, 1, 200);
+        assertInRange(`${path}.distance_tempo.far_cm`, dt.far_cm, 1, 200);
+        if (dt.near_cm >= dt.far_cm) {
+          throw new DslValidationError(`${path}.distance_tempo`, 'near_cm < far_cm 이어야 함');
+        }
+        assertInRange(`${path}.distance_tempo.near_tempo`, dt.near_tempo, 0.5, 3);
+        assertInRange(`${path}.distance_tempo.far_tempo`, dt.far_tempo, 0.5, 3);
+        if (dt.stop_cm_below !== undefined) assertInRange(`${path}.distance_tempo.stop_cm_below`, dt.stop_cm_below, 1, 200);
+        if (dt.max_loops !== undefined) assertInRange(`${path}.distance_tempo.max_loops`, dt.max_loops, 1, 30);
+        if (dt.timeout_ms !== undefined) assertInRange(`${path}.distance_tempo.timeout_ms`, dt.timeout_ms, 1000, 120000);
       }
       return;
     case 'save_skill':

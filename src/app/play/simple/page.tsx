@@ -864,14 +864,31 @@ export default function SimplePlayPage() {
           <div className="tg-card-skill-box">
             <div className="tg-card-key-list">
               {[
-                { id: 'close', letter: 'C', en: 'Close', ko: t('card.close'), onClick: () => void onBasicCmd('5'), disabled: !isConnected },
-                { id: 'open',  letter: 'O', en: 'Open',  ko: t('card.open'),  onClick: () => void onBasicCmd('%'), disabled: !isConnected },
-                { id: 'play',  letter: 'P', en: 'Play',  ko: t('card.play'),  onClick: onPlayCardSkill,           disabled: !isConnected || isExecuting },
+                { id: 'close', letter: 'C', en: 'Close', ko: t('card.close'), onClick: () => void onBasicCmd('5'), disabled: !isConnected, variant: 'normal' as const },
+                { id: 'open',  letter: 'O', en: 'Open',  ko: t('card.open'),  onClick: () => void onBasicCmd('%'), disabled: !isConnected, variant: 'normal' as const },
+                // 실행 중이면 Play 가 Stop 으로 토글 — 클릭 시 abort + 음악/모터 즉시 정지.
+                isExecuting
+                  ? {
+                      id: 'stop', letter: 'S', en: 'Stop', ko: t('card.stop'),
+                      onClick: () => {
+                        abortRef.current?.abort();
+                        try { stopMelody(); } catch {}
+                        void useBoardStore.getState().send(GLOBAL.stopAll).catch(() => {});
+                      },
+                      disabled: false,
+                      variant: 'stop' as const,
+                    }
+                  : {
+                      id: 'play', letter: 'P', en: 'Play', ko: t('card.play'),
+                      onClick: onPlayCardSkill,
+                      disabled: !isConnected,
+                      variant: 'normal' as const,
+                    },
               ].map((b) => (
                 <button
                   key={b.id}
                   type="button"
-                  className="tg-card-key-btn"
+                  className={`tg-card-key-btn ${b.variant === 'stop' ? 'is-stop' : ''}`}
                   onClick={b.onClick}
                   disabled={b.disabled}
                 >

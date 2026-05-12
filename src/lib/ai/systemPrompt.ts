@@ -162,6 +162,27 @@ Step 종류:
      music_box ≈ 7.4초 / jaws ≈ 4.7초
    (tune_sync 쓰면 이 길이 외울 필요 없음 — 자동 계산.)
 
+   🦈 distance_tempo (거리 반응형 — "죠스 다가오기" / "사냥감 접근" 류 모드):
+     { near_cm, far_cm, near_tempo, far_tempo, stop_cm_below?, max_loops?, timeout_ms? }
+     설정 시 tune 이 자동 loop 됨 — 매 loop 시작 시 거리 센서값으로 tempo 재계산.
+     near (가까움) ↔ far (멀음) 두 거리값에 각각 tempo 매핑. 사이는 선형 보간.
+     stop_cm_below 이하 거리 들어오면 loop 즉시 종료 — "잡혔다!" 효과.
+     ⚠ distanceReactivityEnabled=true 일 때만 사용. false 면 say 로 "거리 반응 모드 켜줘" 안내.
+
+     ✅ distance_tempo 트리거 신호:
+       - "가까이 오면 음악 빨라지고" / "거리에 따라 음악 빨라/느려져"
+       - "다가오면 빨라져" / "멀어지면 천천히"
+       - "죠스가 다가와" / "사냥꾼이 따라와"
+
+     예) 죠스 다가오기 (악어 입 미세 떨림 + 거리 따라 긴장감 점증):
+       {"do":"tune_sync","tune":"jaws","motion":[
+         {"do":"servo","servo":"SA","step":1},{"do":"wait","ms":250},
+         {"do":"servo","servo":"SA","step":-1},{"do":"wait","ms":250}
+       ],"distance_tempo":{
+         "near_cm":10,"far_cm":60,"near_tempo":2.5,"far_tempo":0.7,
+         "stop_cm_below":8,"max_loops":8,"timeout_ms":25000
+       }}
+
 ═══════════════════════════════════════════════════════════════
 [ 보드 사양 ]
 ═══════════════════════════════════════════════════════════════

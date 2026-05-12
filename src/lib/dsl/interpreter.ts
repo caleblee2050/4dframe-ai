@@ -387,33 +387,108 @@ async function runMotionInline(steps: Step[], ctx: StepCtx, deadline: number) {
   }
 }
 
-async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, _path: string) {
-  const tempo = step.tempo ?? 1.0;
-  const totalMs = melodyDurationMs(step.tune, tempo, step.custom);
-  const trim = step.trim_to_music ?? true;
-  const cycleMs = estimateMotionCycleMs(step.motion);
+// 거리 → tempo 보간. dt.near_cm 이하 = near_tempo, far_cm 이상 = far_tempo, 사이는 선형.
+// 거리 센서 미가용(null) 이면 두 tempo 의 평균 사용.
+function tempoFromDistance(
+  cm: number | null,
+  dt: NonNullable<TuneSyncStep['distance_tempo']>,
+): number {
+  if (cm === null || !Number.isFinite(cm)) return (dt.near_tempo + dt.far_tempo) / 2;
+  if (cm <= dt.near_cm) return dt.near_tempo;
+  if (cm >= dt.far_cm) return dt.far_tempo;
+  const t = (cm - dt.near_cm) / (dt.far_cm - dt.near_cm);
+  return dt.near_tempo + (dt.far_tempo - dt.near_tempo) * t;
+}
 
-  // 음악 시작 (fire-and-forget — await 하면 사이클이 못 돈다)
-  ctx.emit({ type: 'play_tune', tune: step.tune, tempo, await_melody: false, custom: step.custom });
+// tune_sync 한 곡 실행 — 음악 시작, motion 사이클 반복, 끝나면 stop.
+// 외부 abort / 외부 deadline 도달 시 중단. 반환: 자연 종료 여부 (true=음악 끝까지 / false=중단됨)
+async function playTuneOnce(
+  step: TuneSyncStep,
+  ctx: StepCtx,
+  effectiveTempo: number,
+  outerDeadline: number,
+): Promise<boolean> {
+  const totalMs = melodyDurationMs(step.tune, effectiveTempo, step.custom);
+  // motion duration_ms 도 tempo 비율로 스케일 — tempo 빠르면 모션도 빠르게.
+  const scaledMotion = scaleMotionByTempo(step.motion, effectiveTempo);
+  const trim = step.trim_to_music ?? true;
+  const cycleMs = estimateMotionCycleMs(scaledMotion);
+
+  ctx.emit({ type: 'play_tune', tune: step.tune, tempo: effectiveTempo, await_melody: false, custom: step.custom });
   const startedAt = Date.now();
-  const deadline = startedAt + totalMs;
+  const innerDeadline = Math.min(startedAt + totalMs, outerDeadline);
 
   while (true) {
-    if (ctx.signal?.aborted) {
-      try { stopMelody(); } catch {}
-      await safeStop(ctx.send);
-      return;
-    }
+    if (ctx.signal?.aborted) return false;
+    if (Date.now() >= outerDeadline) return false;
     const elapsed = Date.now() - startedAt;
     if (elapsed >= totalMs) break;
-    // 마지막 사이클 시작이 음악 끝을 너무 넘기면 생략 (음악 끝 = 모터 끝 보장)
     if (trim && cycleMs > 0 && elapsed + cycleMs > totalMs + 200) break;
-    await runMotionInline(step.motion, ctx, deadline);
+    await runMotionInline(scaledMotion, ctx, innerDeadline);
   }
 
-  // 음악 끝 시점까지 정확히 대기 후 stop — 잔여 모터 회전 차단
+  // 음악 끝까지 정확히 대기 (모터 정지는 호출자 측에서)
   const remaining = totalMs - (Date.now() - startedAt);
-  if (remaining > 0) await ctx.delay(remaining);
+  if (remaining > 0) {
+    const clamped = Math.min(remaining, Math.max(0, outerDeadline - Date.now()));
+    if (clamped > 0) await ctx.delay(clamped);
+  }
+  return true;
+}
+
+// tempo 변화에 맞춰 motion 의 duration_ms 를 비율 조정.
+// tempo 2.0 (2배 빠름) → motion duration 절반.
+function scaleMotionByTempo(steps: Step[], tempo: number): Step[] {
+  if (Math.abs(tempo - 1.0) < 0.001) return steps;
+  const scale = 1 / tempo;
+  return steps.map((s): Step => {
+    if (s.do === 'spin' && s.duration_ms !== undefined) {
+      return { ...s, duration_ms: Math.max(50, Math.round(s.duration_ms * scale)) };
+    }
+    if (s.do === 'drive' && s.duration_ms !== undefined) {
+      return { ...s, duration_ms: Math.max(50, Math.round(s.duration_ms * scale)) };
+    }
+    if (s.do === 'wait') {
+      return { ...s, ms: Math.max(20, Math.round(s.ms * scale)) };
+    }
+    return s;
+  });
+}
+
+async function execTuneSync(step: TuneSyncStep, ctx: StepCtx, _path: string) {
+  // 🦈 distance_tempo 가 있으면 = loop 모드 (죠스 다가오기).
+  if (step.distance_tempo) {
+    const dt = step.distance_tempo;
+    const stopCmBelow = dt.stop_cm_below ?? 5;
+    const maxLoops = dt.max_loops ?? 10;
+    const timeoutMs = dt.timeout_ms ?? 30000;
+    const sessionStart = Date.now();
+    const outerDeadline = sessionStart + timeoutMs;
+
+    for (let loop = 0; loop < maxLoops; loop++) {
+      if (ctx.signal?.aborted) break;
+      if (Date.now() >= outerDeadline) break;
+      const cm = ctx.readDistance();
+      if (cm !== null && cm < stopCmBelow) break;
+      const tempo = tempoFromDistance(cm, dt);
+      const completed = await playTuneOnce(step, ctx, tempo, outerDeadline);
+      // 자연 종료 안 됐으면 (abort/timeout) 루프도 종료.
+      if (!completed) break;
+      // 짧은 휴지 (한 loop 끝 → 다음 시작 사이 정적) — 거리감 살리는 호흡.
+      if (loop < maxLoops - 1) await ctx.delay(150);
+    }
+    try { stopMelody(); } catch {}
+    await safeStop(ctx.send);
+    return;
+  }
+
+  // 일반 모드 — 한 곡 + motion 동기 + 끝나면 stop.
+  const tempo = step.tempo ?? 1.0;
+  const totalMs = melodyDurationMs(step.tune, tempo, step.custom);
+  await playTuneOnce(step, ctx, tempo, Date.now() + totalMs + 2000);
+  if (ctx.signal?.aborted) {
+    try { stopMelody(); } catch {}
+  }
   await ctx.send(GLOBAL.stopAll);
 }
 
