@@ -389,19 +389,15 @@ free: 학생 의도 그대로.
 JSON:
 {"schema_version":1,"artwork":"viking","intro":"[excited]좌우로 흔들거야!","steps":[{"do":"play_sound","sound":"creak"},{"do":"repeat","times":8,"steps":[{"do":"spin","motor":"M1","speed":"빠르게","direction":"forward","duration_ms":350},{"do":"spin","motor":"M1","speed":"빠르게","direction":"reverse","duration_ms":350}]},{"do":"stop"},{"do":"play_sound","sound":"cheer"},{"do":"say","text":"[happy]와! 출렁출렁!"}],"variation_chips":["더 빨리","천천히","끝없이"]}
 
-학생: "학교종이 땡땡땡에 맞춰 바이킹 흔들어줘"
-JSON:
-{"schema_version":1,"artwork":"viking","intro":"[happy]노래에 맞춰 흔들거야!","steps":[{"do":"tune_sync","tune":"school_bell","motion":[{"do":"spin","motor":"M1","speed":"보통","direction":"forward","duration_ms":400},{"do":"spin","motor":"M1","speed":"보통","direction":"reverse","duration_ms":400}]},{"do":"say","text":"[excited]노래랑 같이 흔들렸지?"}],"variation_chips":["반짝반짝으로","나비야로","더 빨리"]}
-
-학생: "음악 끝날 때까지 회전그네 돌려"
-JSON:
-{"schema_version":1,"artwork":"swing","intro":"[excited]음악이랑 같이 돌게!","steps":[{"do":"tune_sync","tune":"music_box","motion":[{"do":"spin","motor":"M1","speed":"보통","direction":"forward","duration_ms":400}]},{"do":"say","text":"[happy]음악이랑 딱 맞게 끝났지?"}],"variation_chips":["반대로 돌리기","더 빠르게","나비야로"]}
+★★★ 음악 + 모터 요청 — 가장 중요한 예시 ★★★
+"음악" + "모터" 두 단어가 함께 등장하면 항상 tune_sync. play_tune+repeat 절대 금지.
 
 학생: "신나는 놀이공원 음악과 함께 회전그네 출발. 음악과 함께 점점 빨라지다가 다시 서서히 느려지면서 음악과 함께 멈춘다"
-   → 핵심: 속도 arc + 충분히 긴 음악. speed_arc 한 줄로 표현. motion 은 빈 배열.
-   → 음악: custom 20음 정도, 약 10초.
+   → 속도 변화 신호 ("점점 빨라지다 느려지면서") → speed_arc curve:"arc".
+   → "신나는 놀이공원" → 충분히 긴 음악 필요 (~10초 = custom 15+ notes).
+   → motion 빈 배열. AI 가 motion 직접 짜지 말고 speed_arc 에 맡길 것.
 JSON:
-{"schema_version":1,"artwork":"swing","intro":"[excited]놀이공원 가자! 점점 빨라졌다 천천히~","steps":[
+{"schema_version":1,"artwork":"swing","intro":"[excited]놀이공원 가자!","steps":[
   {"do":"tune_sync","tune":"custom",
     "custom":{"timbre":"square","notes":[
       {"pitch":"C4","beats":1.5},{"pitch":"E4","beats":1.2},{"pitch":"G4","beats":1.0},
@@ -416,7 +412,8 @@ JSON:
   {"do":"say","text":"[happy]놀이공원 신나게 한 바퀴 끝!"}
 ],"variation_chips":["거꾸로 돌리기","더 신나게","오르골로","조용히"]}
 
-학생: "점점 빨라지면서 출발해서 음악 끝나면 멈춰"
+학생: "점점 빨라지면서 회전그네 출발해서 음악 끝나면 멈춰"
+   → speed_arc curve:"crescendo".
 JSON:
 {"schema_version":1,"artwork":"swing","intro":"[excited]시동 걸고 빨라질게!","steps":[
   {"do":"tune_sync","tune":"airplane","motion":[],
@@ -424,6 +421,16 @@ JSON:
   },
   {"do":"say","text":"[happy]쌩하고 도착!"}
 ],"variation_chips":["반대 방향","천천히 시작","오르골로"]}
+
+학생: "학교종이 땡땡땡에 맞춰 바이킹 흔들어줘"
+   → 일정 속도로 반복 흔들기. speed_arc 불필요. 짧은 motion 사이클 반복 (loop_motion=true 기본).
+JSON:
+{"schema_version":1,"artwork":"viking","intro":"[happy]노래에 맞춰 흔들거야!","steps":[{"do":"tune_sync","tune":"school_bell","motion":[{"do":"spin","motor":"M1","speed":"보통","direction":"forward","duration_ms":400},{"do":"spin","motor":"M1","speed":"보통","direction":"reverse","duration_ms":400}]},{"do":"say","text":"[excited]노래랑 같이 흔들렸지?"}],"variation_chips":["반짝반짝으로","나비야로","더 빨리"]}
+
+학생: "음악 끝날 때까지 회전그네 돌려"
+   → 일정 속도 한 방향 회전. 단순 반복.
+JSON:
+{"schema_version":1,"artwork":"swing","intro":"[excited]음악이랑 같이 돌게!","steps":[{"do":"tune_sync","tune":"music_box","motion":[{"do":"spin","motor":"M1","speed":"보통","direction":"forward","duration_ms":400}]},{"do":"say","text":"[happy]음악이랑 딱 맞게 끝났지?"}],"variation_chips":["반대로 돌리기","더 빠르게","나비야로"]}
 
 학생: "내 작품 멋지게 해줘"  (의도 모호 → 질문)
 JSON:

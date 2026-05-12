@@ -46,9 +46,10 @@ export interface RunOptions {
 
 export async function runProgram(program: Program, opts: RunOptions = {}): Promise<void> {
   const send = opts.send ?? ((p: string) => useBoardStore.getState().send(p));
-  const delay = opts.delay ?? defaultDelay;
-  const readDistance = opts.readDistanceCm ?? (() => useBoardStore.getState().lastDistanceCm);
   const signal = opts.signal;
+  // delay 가 signal 인지 — abort 시 즉시 resolve. 큰 duration_ms 의 delay 도중에 끊기 가능.
+  const delay = opts.delay ?? ((ms: number) => defaultDelay(ms, signal));
+  const readDistance = opts.readDistanceCm ?? (() => useBoardStore.getState().lastDistanceCm);
   // emit 가 Promise 를 리턴하면 인터프리터가 await — say step 의 음성 종료 대기에 사용.
   const emit: (e: InterpreterEvent) => void | Promise<void> = opts.onEvent ?? (() => {});
 
@@ -579,6 +580,13 @@ async function safeStop(send: (p: string) => Promise<void>) {
   try { await send(GLOBAL.stopAll); } catch {}
 }
 
-function defaultDelay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function defaultDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) { resolve(); return; }
+    const t = setTimeout(resolve, ms);
+    if (signal) {
+      const onAbort = () => { clearTimeout(t); resolve(); };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  });
 }

@@ -274,16 +274,21 @@ export const useBoardStore = create<BoardState & BoardActions>()((set, get) => (
   disconnect: async () => {
     // ⚠ 끊기 전 모터 강제 정지 — 안 보내면 보드가 마지막 명령 (예: 'W' 전진) 그대로 유지해서
     // 모터가 계속 돌아감. USB 면 _writer, BLE 면 bleSend 로 송신.
-    // BLE 는 패킷 손실 가능 → stopAll 3회 중복 + 50ms 간격으로 송신해서 펌웨어 도달 보장.
-    for (let i = 0; i < 3; i++) {
+    // '0V0' = stop + globalPwm 0 → 어떤 후속 noise byte 가 와도 모터 안 돔.
+    // BLE 는 패킷 손실 가능 → 5회 중복 송신 + 40ms 간격으로 펌웨어 도달 보장.
+    const KILL_PAYLOAD = '0V00V00V0';   // 3중 stopAll + 3중 V0 한 패킷에
+    for (let i = 0; i < 5; i++) {
       try {
+        if (typeof window !== 'undefined') console.log('[disconnect→]', JSON.stringify(KILL_PAYLOAD), `(attempt ${i + 1}/5)`);
         if (_writer) {
-          await _writer.write(encoder.encode(GLOBAL.stopAll));
+          await _writer.write(encoder.encode(KILL_PAYLOAD));
         } else if (_bleChar) {
-          await bleSend(GLOBAL.stopAll);
+          await bleSend(KILL_PAYLOAD);
         }
-      } catch {}
-      if (i < 2) await new Promise<void>((r) => setTimeout(r, 50));
+      } catch (e) {
+        if (typeof window !== 'undefined') console.warn('[disconnect→] stop 송신 실패', e);
+      }
+      if (i < 4) await new Promise<void>((r) => setTimeout(r, 40));
     }
     set({ status: 'closing' });
     await safeCleanup();

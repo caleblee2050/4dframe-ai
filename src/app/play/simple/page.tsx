@@ -359,6 +359,9 @@ export default function SimplePlayPage() {
         throw new Error(`AI 응답 형식 오류 — 다시 시도해주세요. (${(jsonErr as Error).message})`);
       }
       const valid = validateProgram(parsed);
+      // 🐛 디버그 — AI 가 실제 생성한 program 을 콘솔에 펼쳐 출력. 음악-모터 싱크 문제 진단용.
+      // 사용자가 Cmd+Option+I (dev tools) 열고 Console 탭에서 확인 가능.
+      console.log('%c[AI Program]', 'background:#3F087F;color:#FFEF35;padding:2px 6px;border-radius:3px;font-weight:bold', valid);
       // history 도 누적 8턴까지만 유지
       setHistory([...newHistory, { role: 'assistant' as const, content: cleaned }].slice(-16));
       void prefetchProgramAudio(valid);
