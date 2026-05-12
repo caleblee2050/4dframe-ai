@@ -128,11 +128,13 @@ export const USB_FILTER = {
 
 // 보드 펌웨어가 v1.3+ (V/X/F/? 명령 지원) 인지 판정.
 // 펌웨어가 BOOT:Ami5_V01:FW1.3 또는 ? 진단 응답으로 FW 채워줌.
-// fw 값 미감지 시 v1.0 가정 (보수적 호환 모드).
+// fw 값 미감지 시 v1.3+ 가정 — 모든 사용자 보드는 v1.4.1 플래시 완료 (5/12 PM 기준).
+// v1.0 레거시는 BLE 미지원이므로 어차피 USB 연결만 가능 + BOOT 라인 즉시 수신됨.
+// 이전 false 기본값은 BOOT 라인 늦게 도착 시 V 명령 skip → 속도 변화 안 보이는 버그 유발.
 export function isV13Plus(fw: string | null | undefined): boolean {
-  if (!fw) return false;
+  if (!fw) return true;
   const m = fw.match(/^(\d+)\.(\d+)/);
-  if (!m) return false;
+  if (!m) return true;
   const major = parseInt(m[1], 10);
   const minor = parseInt(m[2], 10);
   return major > 1 || (major === 1 && minor >= 3);
